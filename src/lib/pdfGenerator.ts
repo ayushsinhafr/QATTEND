@@ -64,7 +64,7 @@ export const generateAttendancePDF = (sessionData: SessionData): void => {
     doc.line(20, 110, 190, 110);
     
     // Prepare table data
-    const tableHeaders = ['S.No.', 'Student Name', 'Email', 'Status', 'Marked At'];
+    const tableHeaders = ['S.No.', 'Student Name', 'Registration no', 'Status', 'Marked At'];
     const tableData = attendanceData.map((student, index) => [
       (index + 1).toString(),
       student.student_name || 'N/A',

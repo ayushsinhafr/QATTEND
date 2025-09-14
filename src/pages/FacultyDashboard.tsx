@@ -1,13 +1,16 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useClasses, AttendanceRecord } from "@/hooks/useClasses";
+import { AttendanceSessionManager } from "@/lib/sessionManager";
+import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { GraduationCap, LogOut, Plus, QrCode, Users, BarChart, Eye, Clock, Copy, Check, TrendingUp, Trash2, Calendar, Download } from "lucide-react";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { GraduationCap, LogOut, Plus, QrCode, Users, BarChart, Eye, Clock, Copy, Check, TrendingUp, Trash2, Calendar, Download, UserCheck, Camera, Play, Menu, User, Shuffle, CheckCircle } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import QRCode from "qrcode";
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from 'recharts';
@@ -16,14 +19,33 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 
 const FacultyDashboard = () => {
   const { profile, signOut } = useAuth();
+  const { toast } = useToast();
   const { classes, loading, createClass, generateQRToken, getLiveAttendance, deleteClass, getAttendanceSessions, getSessionAttendance, fetchClassAttendance, debugDatabaseContents } = useClasses();
   const [showCreateClass, setShowCreateClass] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [showSessionsDialog, setShowSessionsDialog] = useState(false);
   const [showSessionDetailDialog, setShowSessionDetailDialog] = useState(false);
+  const [showManualAttendance, setShowManualAttendance] = useState(false);
+  const [showComingSoon, setShowComingSoon] = useState(false);
+  const [showAttendanceSession, setShowAttendanceSession] = useState(false);
+  const [showHybridAttendance, setShowHybridAttendance] = useState(false);
+  const [hybridQrCodeUrl, setHybridQrCodeUrl] = useState<string>("");
+  const [hybridManualAttendanceData, setHybridManualAttendanceData] = useState<{[key: string]: 'present' | 'absent' | 'pending'}>({});
+  const [hybridEnrolledStudents, setHybridEnrolledStudents] = useState<any[]>([]);
+  const [hybridAttendanceRecords, setHybridAttendanceRecords] = useState<AttendanceRecord[]>([]);
+  const [loadingHybridStudents, setLoadingHybridStudents] = useState(false);
+  const [hybridSessionId, setHybridSessionId] = useState<string | null>(null);
+  const [hybridSessionTimestamp, setHybridSessionTimestamp] = useState<string | null>(null);
+  const [submittingHybridAttendance, setSubmittingHybridAttendance] = useState(false);
+  const [currentSessionClass, setCurrentSessionClass] = useState<any>(null);
   const [selectedClass, setSelectedClass] = useState<string | null>(null);
   const [selectedAnalyticsClass, setSelectedAnalyticsClass] = useState<any>(null);
   const [selectedSessionClass, setSelectedSessionClass] = useState<any>(null);
+  const [selectedManualAttendanceClass, setSelectedManualAttendanceClass] = useState<any>(null);
+  const [enrolledStudents, setEnrolledStudents] = useState<any[]>([]);
+  const [manualAttendanceData, setManualAttendanceData] = useState<{[key: string]: 'present' | 'absent'}>({});
+  const [loadingStudents, setLoadingStudents] = useState(false);
+  const [submittingAttendance, setSubmittingAttendance] = useState(false);
   const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([]);
   const [analyticsData, setAnalyticsData] = useState<any>(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
@@ -42,6 +64,101 @@ const FacultyDashboard = () => {
   const [section, setSection] = useState("");
   const [studentStrength, setStudentStrength] = useState(30);
 
+  // Refs for cleanup
+  const hybridIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const qrRefreshIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const isMountedRef = useRef(true);
+
+  // Rate limiting refs
+  const lastQRGenerationRef = useRef<number>(0);
+  const lastSessionStartRef = useRef<number>(0);
+  const lastSubmissionRef = useRef<number>(0);
+
+  // Component cleanup on unmount
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+      
+      // Clear any active intervals
+      if (hybridIntervalRef.current) {
+        clearInterval(hybridIntervalRef.current);
+        hybridIntervalRef.current = null;
+      }
+      
+      if (qrRefreshIntervalRef.current) {
+        clearInterval(qrRefreshIntervalRef.current);
+        qrRefreshIntervalRef.current = null;
+      }
+      
+      // End any active sessions
+      AttendanceSessionManager.endAllSessions();
+    };
+  }, []);
+
+  // Real-time updates for hybrid attendance with memory leak protection
+  useEffect(() => {
+    if (!showHybridAttendance || !currentSessionClass) {
+      // Clear interval when hybrid attendance is closed
+      if (hybridIntervalRef.current) {
+        clearInterval(hybridIntervalRef.current);
+        hybridIntervalRef.current = null;
+      }
+      return;
+    }
+
+    // Clear any existing interval before setting new one
+    if (hybridIntervalRef.current) {
+      clearInterval(hybridIntervalRef.current);
+    }
+
+    hybridIntervalRef.current = setInterval(() => {
+      if (isMountedRef.current && showHybridAttendance && currentSessionClass) {
+        fetchHybridAttendanceRecords(currentSessionClass.id);
+      }
+    }, 5000); // Refresh every 5 seconds
+
+    return () => {
+      if (hybridIntervalRef.current) {
+        clearInterval(hybridIntervalRef.current);
+        hybridIntervalRef.current = null;
+      }
+    };
+  }, [showHybridAttendance, currentSessionClass, hybridManualAttendanceData]);
+
+  // Auto-refresh QR code every 4.5 minutes for hybrid attendance with memory leak protection
+  useEffect(() => {
+    if (!showHybridAttendance || !currentSessionClass) {
+      // Clear interval when hybrid attendance is closed
+      if (qrRefreshIntervalRef.current) {
+        clearInterval(qrRefreshIntervalRef.current);
+        qrRefreshIntervalRef.current = null;
+      }
+      return;
+    }
+
+    // Clear any existing interval before setting new one
+    if (qrRefreshIntervalRef.current) {
+      clearInterval(qrRefreshIntervalRef.current);
+    }
+
+    qrRefreshIntervalRef.current = setInterval(() => {
+      if (isMountedRef.current && showHybridAttendance && currentSessionClass) {
+        handleHybridGenerateQR(currentSessionClass.id);
+        toast({
+          title: "QR Code Refreshed",
+          description: "New QR code generated for continued attendance marking",
+        });
+      }
+    }, 270000); // 4.5 minutes
+
+    return () => {
+      if (qrRefreshIntervalRef.current) {
+        clearInterval(qrRefreshIntervalRef.current);
+        qrRefreshIntervalRef.current = null;
+      }
+    };
+  }, [showHybridAttendance, currentSessionClass]);
+
   const handleCreateClass = async (e: React.FormEvent) => {
     e.preventDefault();
     const newClass = await createClass(className, section, studentStrength);
@@ -53,7 +170,56 @@ const FacultyDashboard = () => {
     }
   };
 
+  const handleStartAttendanceSession = (classInfo: any) => {
+    // Rate limiting - prevent session start more than once every 2 seconds
+    const now = Date.now();
+    if (now - lastSessionStartRef.current < 2000) {
+      toast({
+        title: "Rate Limit",
+        description: "Please wait before starting another session",
+        variant: "destructive",
+      });
+      return;
+    }
+    lastSessionStartRef.current = now;
+
+    // Input validation
+    if (!classInfo || !classInfo.id) {
+      toast({
+        title: "Error",
+        description: "Invalid class information",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setCurrentSessionClass(classInfo);
+    setShowAttendanceSession(true);
+  };
+
   const handleGenerateQR = async (classId: string) => {
+    // Rate limiting - prevent QR generation more than once every 3 seconds
+    const now = Date.now();
+    if (now - lastQRGenerationRef.current < 3000) {
+      toast({
+        title: "Rate Limit",
+        description: "Please wait before generating another QR code",
+        variant: "destructive",
+      });
+      return;
+    }
+    lastQRGenerationRef.current = now;
+
+    // Input validation
+    if (!classId || typeof classId !== 'string' || classId.trim() === '') {
+      toast({
+        title: "Error",
+        description: "Invalid class ID",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setIsGeneratingQR(true);
     try {
       const token = await generateQRToken(classId);
@@ -62,153 +228,541 @@ const FacultyDashboard = () => {
         const qrUrl = await QRCode.toDataURL(token);
         setQrCodeUrl(qrUrl);
         setSelectedClass(classId);
+        
+        toast({
+          title: "Success",
+          description: "QR code generated successfully!",
+        });
+      } else {
+        throw new Error('Failed to generate QR token');
       }
     } catch (error) {
       console.error('Error generating QR code:', error);
+      toast({
+        title: "Error",
+        description: "Failed to generate QR code. Please try again.",
+        variant: "destructive",
+      });
     } finally {
       setIsGeneratingQR(false);
     }
   };
 
-  const fetchAnalytics = async (classInfo: any) => {
-    console.log('DEBUG: fetchAnalytics class_id:', classInfo.id);
-    setAnalyticsLoading(true);
+  const handleManualAttendance = async (classInfo: any) => {
+    setSelectedManualAttendanceClass(classInfo);
+    setShowManualAttendance(true);
+    await fetchEnrolledStudents(classInfo.id);
+  };
+
+  const handleHybridAttendance = async (classInfo: any) => {
+    setCurrentSessionClass(classInfo);
+    
+    // Create new session using session manager
+    const session = AttendanceSessionManager.createSession(classInfo.id, 'hybrid');
+    setHybridSessionId(session.sessionId);
+    setHybridSessionTimestamp(session.sessionTimestamp);
+    
+    console.log('🚀 Starting new hybrid session with SessionManager:', {
+      sessionId: session.sessionId,
+      sessionTimestamp: session.sessionTimestamp,
+      classId: classInfo.id
+    });
+    
+    // Reset all hybrid state for fresh session
+    setHybridAttendanceRecords([]);
+    setHybridManualAttendanceData({});
+    setHybridEnrolledStudents([]);
+    setHybridQrCodeUrl('');
+    
+    setShowHybridAttendance(true);
+    await fetchHybridEnrolledStudents(classInfo.id);
+    await handleHybridGenerateQR(classInfo.id);
+  };
+
+  const fetchEnrolledStudents = async (classId: string) => {
+    setLoadingStudents(true);
     try {
-      console.log('Fetching analytics for class:', classInfo);
-      
-      // Use the new database function to get analytics
-      const { data: analyticsResult, error: analyticsError } = await supabase
-        .rpc('get_class_analytics', { class_uuid: classInfo.id });
-
-      if (analyticsError) throw analyticsError;
-
-      console.log('Analytics result from function:', analyticsResult);
-
-      // Get detailed enrollment data
-      const { data: enrollmentDetails, error: enrollmentError } = await supabase
-        .rpc('get_class_enrollments_detailed', { class_uuid: classInfo.id });
-
-      if (enrollmentError) throw enrollmentError;
-
-      console.log('Enrollment details:', enrollmentDetails);
-
-      // Fetch all attendance records for this class
-      const { data: attendanceData, error: attendanceError } = await supabase
-        .from('attendance')
+      const { data, error } = await supabase
+        .from('enrollments')
         .select(`
-          *,
-          profiles!attendance_student_id_fkey (
+          id,
+          student_id,
+          profiles!enrollments_student_id_fkey (
             name,
             unique_id
           )
         `)
-        .eq('class_id', classInfo.id)
-        .order('session_date', { ascending: false });
+        .eq('class_id', classId);
 
-      if (attendanceError) throw attendanceError;
-
-      const attendanceRecords = attendanceData || [];
-      const totalStudents = analyticsResult?.enrolled_students || 0;
-      const totalSessions = analyticsResult?.total_sessions || 0;
-
-      console.log('Total enrolled students:', totalStudents);
-      console.log('Total sessions:', totalSessions);
-      console.log('Total attendance records:', attendanceRecords.length);
+      if (error) throw error;
       
-      // Group attendance by date to get session-wise data
-      const attendanceByDate = attendanceRecords.reduce((acc: any, record: any) => {
-        const date = record.session_date;
-        if (!acc[date]) {
-          acc[date] = {
-            date,
-            presentCount: 0,
-            absentCount: 0,
-            totalEnrolled: totalStudents,
-            attendedStudents: new Set(),
-            records: []
-          };
-        }
-        acc[date].records.push(record);
-        acc[date].attendedStudents.add(record.student_id);
-        
-        if (record.status === 'present') {
-          acc[date].presentCount++;
-        } else if (record.status === 'absent') {
-          acc[date].absentCount++;
-        }
-        return acc;
-      }, {});
+      const students = data || [];
+      setEnrolledStudents(students);
+      
+      // Initialize attendance data with empty state
+      const initialAttendanceData: {[key: string]: 'present' | 'absent'} = {};
+      students.forEach(student => {
+        initialAttendanceData[student.student_id] = 'present'; // Default to present
+      });
+      setManualAttendanceData(initialAttendanceData);
+    } catch (error) {
+      console.error('Error fetching enrolled students:', error);
+      toast({
+        title: "Error",
+        description: "Failed to fetch enrolled students",
+        variant: "destructive",
+      });
+    } finally {
+      setLoadingStudents(false);
+    }
+  };
 
-      // Calculate session data with proper enrollment vs attendance breakdown
-      const sessionData = Object.values(attendanceByDate).map((session: any) => {
-        const markedStudents = session.attendedStudents.size;
-        const notMarkedCount = Math.max(0, totalStudents - markedStudents);
-        
-        return {
-          date: session.date,
-          presentCount: session.presentCount,
-          absentCount: session.absentCount,
-          totalStudents: totalStudents,
-          markedStudents: markedStudents,
-          notMarkedCount: notMarkedCount,
-          attendancePercentage: totalStudents > 0 ? Math.round((session.presentCount / totalStudents) * 100) : 0
-        };
+  const fetchHybridEnrolledStudents = async (classId: string) => {
+    setLoadingHybridStudents(true);
+    try {
+      const { data, error } = await supabase
+        .from('enrollments')
+        .select(`
+          id,
+          student_id,
+          profiles!inner(
+            name,
+            unique_id
+          )
+        `)
+        .eq('class_id', classId);
+
+      if (error) throw error;
+
+      const students = data.map(enrollment => ({
+        student_id: enrollment.student_id,
+        name: enrollment.profiles.name,
+        unique_id: enrollment.profiles.unique_id,
+        enrollment_id: enrollment.id
+      }));
+
+      setHybridEnrolledStudents(students);
+
+      // Initialize hybrid attendance data with 'pending' state
+      const initialHybridAttendanceData: {[key: string]: 'present' | 'absent' | 'pending'} = {};
+      students.forEach(student => {
+        initialHybridAttendanceData[student.student_id] = 'pending';
+      });
+      setHybridManualAttendanceData(initialHybridAttendanceData);
+
+      // Don't fetch existing attendance - this is a fresh session
+    } catch (error) {
+      console.error('Error fetching hybrid enrolled students:', error);
+      toast({
+        title: "Error",
+        description: "Failed to fetch enrolled students",
+        variant: "destructive",
+      });
+    } finally {
+      setLoadingHybridStudents(false);
+    }
+  };
+
+  const handleHybridGenerateQR = async (classId: string) => {
+    setIsGeneratingQR(true);
+    try {
+      // Get the current hybrid session
+      const session = AttendanceSessionManager.getActiveSession(classId, 'hybrid');
+      if (!session) {
+        console.error('No active hybrid session found');
+        return;
+      }
+
+      // Generate secure token using session manager
+      const hybridToken = AttendanceSessionManager.generateSecureQRToken(session);
+      
+      // Update the class with the hybrid QR token
+      const expiration = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
+      
+      const { error } = await supabase
+        .from('classes')
+        .update({
+          qr_token: hybridToken,
+          qr_expiration: expiration.toISOString()
+        })
+        .eq('id', classId);
+
+      if (error) throw error;
+      
+      console.log('🔄 Generated secure hybrid QR token:', {
+        token: hybridToken.substring(0, 20) + '...', // Log only part for security
+        sessionId: session.sessionId,
+        expiration: expiration.toISOString()
+      });
+      
+      // Generate QR code image
+      const qrUrl = await QRCode.toDataURL(hybridToken);
+      setHybridQrCodeUrl(qrUrl);
+    } catch (error) {
+      console.error('Error generating hybrid QR code:', error);
+      toast({
+        title: "Error",
+        description: "Failed to generate hybrid QR code",
+        variant: "destructive",
+      });
+    } finally {
+      setIsGeneratingQR(false);
+    }
+  };
+
+  const fetchHybridAttendanceRecords = async (classId: string) => {
+    if (!hybridSessionId || !hybridSessionTimestamp) return;
+    
+    const today = new Date().toISOString().split('T')[0];
+    
+    // Get QR attendance records marked since this session started (to show real-time updates)
+    const sessionStartTime = hybridSessionTimestamp;
+    
+    const { data, error } = await supabase
+      .from('attendance')
+      .select(`
+        *,
+        profiles!inner(
+          name,
+          unique_id
+        )
+      `)
+      .eq('class_id', classId)
+      .eq('session_date', today)
+      .eq('status', 'present')
+      .gte('timestamp', sessionStartTime); // Only get records since session started
+
+    if (error) {
+      console.error('Error fetching hybrid attendance records:', error);
+      return;
+    }
+
+    // Show QR scans that happened during this session
+    const qrScans = (data || []).filter(record => {
+      // Only show QR scans for students not manually marked in this session
+      return !hybridManualAttendanceData[record.student_id] || 
+             hybridManualAttendanceData[record.student_id] === 'pending';
+    });
+
+    console.log('📱 Updated QR scans in hybrid session:', qrScans.length);
+
+    setHybridAttendanceRecords(qrScans.map(record => ({
+      ...record,
+      status: record.status as 'present' | 'absent'
+    })));
+  };
+
+  const handleHybridAttendanceToggle = (studentId: string, status: 'present' | 'absent') => {
+    setHybridManualAttendanceData(prev => ({
+      ...prev,
+      [studentId]: status
+    }));
+  };
+
+  const handleSubmitHybridAttendance = async () => {
+    // Rate limiting - prevent submission more than once every 5 seconds
+    const now = Date.now();
+    if (now - lastSubmissionRef.current < 5000) {
+      toast({
+        title: "Rate Limit",
+        description: "Please wait before submitting again",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!currentSessionClass || !hybridSessionId || !hybridSessionTimestamp) {
+      toast({
+        title: "Error",
+        description: "Missing session information",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    lastSubmissionRef.current = now;
+    setSubmittingHybridAttendance(true);
+    try {
+      // Get the active session
+      const session = AttendanceSessionManager.getActiveSession(currentSessionClass.id, 'hybrid');
+      if (!session) {
+        console.error('No active hybrid session found');
+        return;
+      }
+
+      console.log('📊 Submitting hybrid attendance with SessionManager:', { 
+        sessionId: session.sessionId, 
+        sessionTimestamp: session.sessionTimestamp,
+        qrScanned: hybridAttendanceRecords.length,
+        manualMarked: Object.values(hybridManualAttendanceData).filter(s => s !== 'pending').length
       });
 
-      // Calculate overall statistics
-      const totalPossibleAttendances = totalStudents * totalSessions;
-      const totalPresentAttendances = attendanceRecords.filter((r: any) => r.status === 'present').length;
-      const averageAttendance = totalPossibleAttendances > 0 
-        ? Math.round((totalPresentAttendances / totalPossibleAttendances) * 100)
-        : 0;
+      // Prepare student status pairs for batch processing
+      const studentStatusPairs: { studentId: string; status: 'present' | 'absent' }[] = [];
 
-      // Get latest session data for pie chart
-      const latestSession = sessionData.length > 0 ? sessionData[0] : null;
+      // Add QR-scanned students (already marked as present)
+      hybridAttendanceRecords.forEach(record => {
+        studentStatusPairs.push({
+          studentId: record.student_id,
+          status: 'present'
+        });
+      });
+
+      // Add manually marked students (not already in QR list)
+      Object.entries(hybridManualAttendanceData).forEach(([studentId, status]) => {
+        if (status !== 'pending' && !hybridAttendanceRecords.find(record => record.student_id === studentId)) {
+          studentStatusPairs.push({
+            studentId: studentId,
+            status: status as 'present' | 'absent'
+          });
+        }
+      });
+
+      // Mark remaining students as absent
+      hybridEnrolledStudents.forEach(student => {
+        const isAlreadyMarked = studentStatusPairs.find(s => s.studentId === student.student_id);
+        if (!isAlreadyMarked) {
+          studentStatusPairs.push({
+            studentId: student.student_id,
+            status: 'absent'
+          });
+        }
+      });
+
+      // Use session manager for batch processing with consistent timestamps
+      const result = await AttendanceSessionManager.createBatchAttendanceRecords(
+        studentStatusPairs,
+        session
+      );
+
+      if (result.error) {
+        throw new Error('Failed to create attendance records');
+      }
+
+      const presentCount = studentStatusPairs.filter(s => s.status === 'present').length;
+      const qrCount = hybridAttendanceRecords.length;
+      const manualCount = presentCount - qrCount;
+
+      console.log('✅ Hybrid session completed successfully with SessionManager:', { 
+        sessionId: session.sessionId,
+        sessionTimestamp: session.sessionTimestamp,
+        presentCount, 
+        qrCount, 
+        manualCount, 
+        totalStudents: hybridEnrolledStudents.length,
+        processedRecords: result.data?.length || 0
+      });
+
+      toast({
+        title: "Success",
+        description: `Hybrid session completed! ${presentCount}/${hybridEnrolledStudents.length} present (${qrCount} QR, ${manualCount} manual)`,
+      });
+
+      // End the session and reset hybrid state
+      AttendanceSessionManager.endSession(session.sessionId);
+      setShowHybridAttendance(false);
+      setHybridQrCodeUrl('');
+      setHybridManualAttendanceData({});
+      setHybridEnrolledStudents([]);
+      setHybridAttendanceRecords([]);
+      setHybridSessionId(null);
+      setHybridSessionTimestamp(null);
+      
+    } catch (error) {
+      console.error('Error submitting hybrid attendance:', error);
+      toast({
+        title: "Error",
+        description: "Failed to submit hybrid attendance",
+        variant: "destructive",
+      });
+    } finally {
+      setSubmittingHybridAttendance(false);
+    }
+  };
+
+  const handleAttendanceToggle = (studentId: string, status: 'present' | 'absent') => {
+    setManualAttendanceData(prev => ({
+      ...prev,
+      [studentId]: status
+    }));
+  };
+
+  const handleSubmitManualAttendance = async () => {
+    if (!selectedManualAttendanceClass) return;
+
+    setSubmittingAttendance(true);
+    try {
+      // Create unique session timestamp for this manual attendance session
+      const sessionTimestamp = new Date().toISOString();
+      const currentDate = sessionTimestamp.split('T')[0]; // YYYY-MM-DD format
+      
+      console.log('Creating new manual attendance session:', sessionTimestamp);
+      
+      // Create attendance records with unique session timestamp
+      const attendanceRecords = Object.entries(manualAttendanceData).map(([studentId, status]) => ({
+        student_id: studentId,
+        class_id: selectedManualAttendanceClass.id,
+        status: status,
+        session_date: currentDate,
+        timestamp: sessionTimestamp
+      }));
+
+      // Insert attendance records one by one to handle potential conflicts
+      for (const record of attendanceRecords) {
+        const { error } = await supabase
+          .from('attendance')
+          .insert(record);
+
+        if (error) {
+          console.error('Error inserting attendance record:', error);
+          
+          // If it's a unique constraint violation, try updating the existing record
+          if (error.code === '23505') {
+            const { error: updateError } = await supabase
+              .from('attendance')
+              .update({
+                status: record.status,
+                timestamp: record.timestamp
+              })
+              .eq('student_id', record.student_id)
+              .eq('class_id', record.class_id)
+              .eq('session_date', record.session_date);
+            
+            if (updateError) {
+              console.error('Error updating attendance record:', updateError);
+              throw updateError;
+            }
+          } else {
+            throw error;
+          }
+        }
+      }
+
+      toast({
+        title: "Success",
+        description: `Manual attendance session created with ${enrolledStudents.length} students marked`,
+      });
+
+      setShowManualAttendance(false);
+      setSelectedManualAttendanceClass(null);
+      setEnrolledStudents([]);
+      setManualAttendanceData({});
+
+    } catch (error) {
+      console.error('Error submitting manual attendance:', error);
+      toast({
+        title: "Error",
+        description: "Failed to submit attendance. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setSubmittingAttendance(false);
+    }
+  };
+
+  const fetchAnalytics = async (classInfo: any) => {
+    setAnalyticsLoading(true);
+    try {
+      // 1. Fetch enrollments (no embedded profile to avoid RLS join blockage)
+      const { data: enrollments, error: enrollmentError } = await supabase
+        .from('enrollments')
+        .select('student_id')
+        .eq('class_id', classInfo.id);
+      if (enrollmentError) throw enrollmentError;
+
+      const totalStudents = enrollments?.length || 0;
+      const studentIds = (enrollments || []).map(e => e.student_id);
+
+      // 2. Fetch attendance records
+      const { data: attendanceRecords, error: attendanceError } = await supabase
+        .from('attendance')
+        .select('*')
+        .eq('class_id', classInfo.id)
+        .order('timestamp', { ascending: false });
+      if (attendanceError) throw attendanceError;
+
+      // 3. Fetch profiles separately (expect RLS to block unless policy added)
+      let profileMap: Record<string, { name: string; unique_id: string }> = {};
+      if (studentIds.length > 0) {
+        const { data: profileRows, error: profileError } = await supabase
+          .from('profiles')
+          .select('user_id, name, unique_id')
+          .in('user_id', studentIds);
+        if (!profileError) {
+          (profileRows || []).forEach(p => {
+            profileMap[p.user_id] = { name: p.name || 'Unknown', unique_id: p.unique_id || 'N/A' };
+          });
+        }
+      }
+
+      // 4. Build sessions aggregation
+      const uniqueSessionTimestamps = [...new Set((attendanceRecords || []).map((r: any) => r.timestamp))];
+      const totalSessions = uniqueSessionTimestamps.length;
+      const attendanceBySession = (attendanceRecords || []).reduce((acc: any, record: any) => {
+        const key = record.timestamp;
+        if (!acc[key]) {
+          acc[key] = {
+            date: record.session_date,
+            timestamp: record.timestamp,
+            presentCount: 0,
+            absentCount: 0,
+            attendedStudents: new Set()
+          };
+        }
+        acc[key].attendedStudents.add(record.student_id);
+        if (record.status === 'present') acc[key].presentCount++; else if (record.status === 'absent') acc[key].absentCount++;
+        return acc;
+      }, {});
+      const sessionData = Object.values(attendanceBySession).map((s: any) => ({
+        date: s.date,
+        timestamp: s.timestamp,
+        presentCount: s.presentCount,
+        absentCount: s.absentCount,
+        totalStudents,
+        markedStudents: s.attendedStudents.size,
+        notMarkedCount: Math.max(0, totalStudents - s.attendedStudents.size),
+        attendancePercentage: totalStudents > 0 ? Math.round((s.presentCount / totalStudents) * 100) : 0
+      }));
+      const sortedSessions = sessionData.sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      const latestSession = sortedSessions[0] || null;
       const pieChartData = latestSession ? [
         { name: 'Present', value: latestSession.presentCount, color: '#10B981' },
         { name: 'Absent', value: latestSession.absentCount, color: '#EF4444' },
         { name: 'Not Marked', value: latestSession.notMarkedCount, color: '#6B7280' }
-      ].filter(item => item.value > 0) : [];
+      ].filter(i => i.value > 0) : [];
 
-      // Student-wise attendance using enrollment details
-      const studentAttendance = enrollmentDetails?.map(enrollment => {
-        const studentRecords = attendanceRecords.filter(record => record.student_id === enrollment.student_id);
-        const presentDays = studentRecords.filter(record => record.status === 'present').length;
-        const attendancePercentage = totalSessions > 0 ? (presentDays / totalSessions * 100) : 0;
+      const totalPossibleAttendances = totalStudents * totalSessions;
+      const totalPresentAttendances = (attendanceRecords || []).filter((r: any) => r.status === 'present').length;
+      const averageAttendance = totalPossibleAttendances > 0 ? Math.round((totalPresentAttendances / totalPossibleAttendances) * 100) : 0;
+
+      // 5. Student performance list
+      const studentAttendance = (enrollments || []).map(e => {
+        const recs = (attendanceRecords || []).filter(r => r.student_id === e.student_id);
+        const present = recs.filter(r => r.status === 'present').length;
+        const pct = totalSessions > 0 ? (present / totalSessions) * 100 : 0;
+        const profile = profileMap[e.student_id];
         return {
-          student: {
-            name: enrollment.student_name,
-            unique_id: enrollment.student_unique_id
-          },
+          student_id: e.student_id,
+          student_name: profile?.name || 'Unknown Student',
+          student_unique_id: profile?.unique_id || 'N/A',
           totalSessions,
-          presentDays,
-          attendancePercentage
+          presentDays: present,
+          attendancePercentage: pct
         };
-      }) || [];
-
-      console.log('Final analytics data:', {
-        classInfo,
-        totalStudents,
-        totalSessions,
-        averageAttendance,
-        sessionCount: sessionData.length,
-        studentCount: studentAttendance.length,
-        pieChartData: pieChartData
-      });
+      }).sort((a, b) => b.attendancePercentage - a.attendancePercentage);
 
       setAnalyticsData({
         classInfo,
         totalStudents,
         totalSessions,
         averageAttendance,
-        attendanceByDate: sessionData.sort((a: any, b: any) => b.date.localeCompare(a.date)),
-        studentAttendance: studentAttendance.sort((a, b) => b.attendancePercentage - a.attendancePercentage),
-        pieChartData: pieChartData,
-        latestSession: latestSession
+        attendanceByDate: sortedSessions,
+        studentAttendance,
+        pieChartData,
+        latestSession
       });
-
-    } catch (error) {
-      console.error('Error fetching analytics:', error);
+    } catch (err) {
+      console.error('Error fetching analytics:', err);
       setAnalyticsData(null);
     } finally {
       setAnalyticsLoading(false);
@@ -266,16 +820,16 @@ const FacultyDashboard = () => {
   };
 
   // Handle view session detail
-  const handleViewSessionDetail = async (sessionId: string, sessionDate: string) => {
-    console.log('🔍 [handleViewSessionDetail] Starting with:', { sessionId, sessionDate, selectedSessionClass });
+  const handleViewSessionDetail = async (sessionId: string, sessionTimestamp: string) => {
+    console.log('🔍 [handleViewSessionDetail] Starting with:', { sessionId, sessionTimestamp, selectedSessionClass });
     
-    setSelectedSessionDate(sessionDate);
+    setSelectedSessionDate(sessionTimestamp);
     setShowSessionDetailDialog(true);
     setLoadingSessionDetail(true);
     
     try {
       console.log('📞 [handleViewSessionDetail] Calling getSessionAttendance...');
-      const detail = await getSessionAttendance(selectedSessionClass.id, sessionDate);
+      const detail = await getSessionAttendance(selectedSessionClass.id, sessionTimestamp);
       console.log('📊 [handleViewSessionDetail] Received detail:', detail);
       
       setSessionDetailData(detail);
@@ -320,7 +874,7 @@ const FacultyDashboard = () => {
   };
 
   // Handle PDF download directly from sessions list
-  const handleDownloadFromSessionsList = async (sessionDate: string, type: 'detailed' | 'summary') => {
+  const handleDownloadFromSessionsList = async (sessionTimestamp: string, type: 'detailed' | 'summary') => {
     if (!selectedSessionClass) {
       console.error('No class selected');
       return;
@@ -328,7 +882,7 @@ const FacultyDashboard = () => {
 
     try {
       // Fetch session data
-      const detail = await getSessionAttendance(selectedSessionClass.id, sessionDate);
+      const detail = await getSessionAttendance(selectedSessionClass.id, sessionTimestamp);
       
       const sessionData = {
         classInfo: {
@@ -337,7 +891,7 @@ const FacultyDashboard = () => {
           class_code: selectedSessionClass.class_code,
           student_strength: selectedSessionClass.student_strength
         },
-        sessionDate: sessionDate,
+        sessionDate: sessionTimestamp,
         attendanceData: detail as any[] // Cast to avoid type issues
       };
 
@@ -433,57 +987,65 @@ const FacultyDashboard = () => {
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 dark:from-slate-900 dark:via-slate-800 dark:to-slate-900">
       {/* Enhanced Header */}
       <header className="border-b border-white/20 bg-white/80 backdrop-blur-xl shadow-lg shadow-blue-500/10 dark:border-slate-700/20 dark:bg-slate-900/80 dark:shadow-slate-900/20">
-        <div className="container mx-auto px-6 py-6">
+        <div className="container mx-auto px-4 sm:px-6 py-4 sm:py-6">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2 sm:gap-4">
               <div className="relative">
                 <div className="absolute inset-0 bg-gradient-to-r from-blue-600 to-purple-600 rounded-xl blur opacity-75"></div>
-                <img src="/LOGO.png" alt="AttendEase Logo" className="relative h-12 w-12 rounded-xl shadow-lg" />
+                <img src="/LOGO.png" alt="AttendEase Logo" className="relative h-8 w-8 sm:h-12 sm:w-12 rounded-xl shadow-lg" />
               </div>
-              <div>
-                <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+              <div className="text-left">
+                <h1 className="text-lg sm:text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
                   AttendEase
                 </h1>
-                <p className="text-sm font-medium text-slate-600">Faculty Dashboard</p>
+                <p className="text-xs sm:text-sm font-medium text-slate-600 dark:text-slate-400">Faculty Dashboard</p>
               </div>
             </div>
-            <div className="flex items-center gap-6">
-              <div className="text-right">
-                <p className="font-semibold text-slate-700 dark:text-slate-300">{profile.name}</p>
-                <p className="text-sm text-slate-500 dark:text-slate-400">{profile.unique_id}</p>
-              </div>
+            <div className="flex items-center gap-2 sm:gap-3">
               <ThemeToggle />
-              <Button 
-                variant="outline" 
-                size="sm" 
-                onClick={handleSignOut}
-                className="border-slate-200 hover:border-red-300 hover:text-red-600 hover:bg-red-50 transition-all duration-200 dark:border-slate-600 dark:hover:border-red-400 dark:hover:bg-red-900/20"
-              >
-                <LogOut className="h-4 w-4 mr-2" />
-                Sign Out
-              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm" className="border-slate-200 hover:border-slate-300 hover:bg-slate-50 dark:border-slate-600 dark:hover:border-slate-500 dark:hover:bg-slate-800 transition-all duration-200">
+                    <User className="h-4 w-4 sm:mr-2" />
+                    <span className="hidden sm:inline">{profile.name}</span>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56">
+                  <DropdownMenuLabel>
+                    <div className="flex flex-col space-y-1">
+                      <p className="text-sm font-medium leading-none">{profile.name}</p>
+                      <p className="text-xs leading-none text-muted-foreground">{profile.unique_id}</p>
+                    </div>
+                  </DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={handleSignOut} className="text-red-600 dark:text-red-400 cursor-pointer">
+                    <LogOut className="mr-2 h-4 w-4" />
+                    <span>Sign Out</span>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </div>
         </div>
       </header>
 
-      <main className="container mx-auto px-6 py-12">
+      <main className="container mx-auto px-4 sm:px-6 py-6 sm:py-12">
         {/* Enhanced Actions Bar */}
-        <div className="flex justify-between items-center mb-12">
-          <div>
-            <h2 className="text-4xl font-bold bg-gradient-to-r from-slate-800 to-slate-600 bg-clip-text text-transparent mb-2">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-6 sm:gap-4 mb-8 sm:mb-12">
+          <div className="w-full sm:w-auto text-center sm:text-left">
+            <h2 className="text-2xl sm:text-4xl font-bold bg-gradient-to-r from-slate-800 to-slate-600 bg-clip-text text-transparent mb-2">
               My Classes
             </h2>
-            <p className="text-lg text-slate-600">Manage your classes and track attendance seamlessly</p>
+            <p className="text-sm sm:text-lg text-slate-600">Manage your classes and track attendance seamlessly</p>
           </div>
           
           <Dialog open={showCreateClass} onOpenChange={setShowCreateClass}>
             <DialogTrigger asChild>
               <Button 
                 size="lg"
-                className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-200 px-8 py-3"
+                className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-200 px-4 sm:px-8 py-3 w-full sm:w-auto"
               >
-                <Plus className="h-5 w-5 mr-2" />
+                <Plus className="h-4 w-4 sm:h-5 sm:w-5 mr-2" />
                 Create Class
               </Button>
             </DialogTrigger>
@@ -648,7 +1210,7 @@ const FacultyDashboard = () => {
             </CardContent>
           </Card>
         ) : (
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-6 lg:gap-8">
             {classes.map((cls) => (
               <Card 
                 key={cls.id} 
@@ -658,17 +1220,17 @@ const FacultyDashboard = () => {
                 <div className="absolute inset-0 bg-gradient-to-br from-blue-50/50 to-purple-50/50 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
                 
                 <CardHeader className="relative z-10 pb-4">
-                  <div className="flex items-start justify-between">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-2">
                     <div className="flex-1">
                       <div className="flex items-center gap-2 mb-2">
                         <div className="w-3 h-3 rounded-full bg-gradient-to-r from-green-400 to-emerald-500"></div>
-                        <span className="text-xl font-bold text-slate-800">{cls.class_name}</span>
+                        <span className="text-lg sm:text-xl font-bold text-slate-800 leading-tight">{cls.class_name}</span>
                       </div>
-                      <p className="text-sm font-medium text-slate-600 bg-slate-100 px-3 py-1 rounded-full w-fit">
+                      <p className="text-xs sm:text-sm font-medium text-slate-600 bg-slate-100 px-3 py-1 rounded-full w-fit">
                         Section: {cls.section}
                       </p>
                     </div>
-                    <div className="flex items-center gap-1 bg-blue-50 px-3 py-2 rounded-xl">
+                    <div className="flex items-center gap-1 bg-blue-50 px-3 py-2 rounded-xl self-start sm:self-auto">
                       <Users className="h-4 w-4 text-blue-600" />
                       <span className="text-sm font-semibold text-blue-700">{cls.student_strength}</span>
                     </div>
@@ -688,16 +1250,15 @@ const FacultyDashboard = () => {
                   
                   <div className="space-y-4">
                     <Button
-                      onClick={() => handleGenerateQR(cls.id)}
-                      disabled={isGeneratingQR}
+                      onClick={() => handleStartAttendanceSession(cls)}
                       className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-200"
                       size="lg"
                     >
-                      <QrCode className="h-5 w-5 mr-2" />
-                      {isGeneratingQR ? 'Generating...' : 'Generate QR Code'}
+                      <Play className="h-4 w-4 sm:h-5 sm:w-5 mr-2" />
+                      <span className="text-sm sm:text-base">Start Attendance Session</span>
                     </Button>
                     
-                    <div className="grid grid-cols-3 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-3">
                       <Button 
                         variant="outline" 
                         size="sm" 
@@ -744,67 +1305,7 @@ const FacultyDashboard = () => {
           </div>
         )}
 
-        {/* Analytics Dialog */}
-        <Dialog open={showAnalytics} onOpenChange={setShowAnalytics}>
-          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <BarChart className="h-5 w-5" />
-                  Class Analytics
-                </div>
-                <Button 
-                  variant="outline" 
-                  size="sm"
-                  onClick={() => selectedAnalyticsClass && fetchAnalytics(selectedAnalyticsClass)}
-                  disabled={analyticsLoading}
-                >
-                  <Clock className="h-4 w-4 mr-1" />
-                  Refresh
-                </Button>
-              </DialogTitle>
-              <DialogDescription>
-                {selectedAnalyticsClass && (
-                  <div className="mb-3 p-3 bg-primary/10 rounded-lg">
-                    <div className="font-medium text-primary">
-                      {selectedAnalyticsClass.class_name} - Section {selectedAnalyticsClass.section}
-                    </div>
-                    <div className="text-sm text-muted-foreground">
-                      Class Code: <span className="font-mono">{selectedAnalyticsClass.class_code}</span> | 
-                      Class Strength: {selectedAnalyticsClass.student_strength}
-                    </div>
-                  </div>
-                )}
-                Comprehensive analytics and attendance insights for this class.
-              </DialogDescription>
-            </DialogHeader>
-
-            <div className="space-y-6">
-              {analyticsLoading ? (
-                <div className="text-center py-12">
-                  <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full mx-auto mb-4"></div>
-                  <p className="text-muted-foreground">Loading analytics...</p>
-                </div>
-              ) : !analyticsData ? (
-                <div className="text-center py-12">
-                  <BarChart className="h-16 w-16 mx-auto mb-4 text-muted-foreground" />
-                  <h3 className="text-lg font-semibold mb-2">No Data Available</h3>
-                  <p className="text-muted-foreground">
-                    No attendance data found for this class.
-                  </p>
-                </div>
-              ) : (
-                <div>Analytics content would be here</div>
-              )}
-            </div>
-            
-            <div className="flex justify-end">
-              <Button variant="outline" onClick={() => setShowAnalytics(false)}>
-                Close
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
+        {/* Removed duplicate placeholder Analytics Dialog */}
 
         {/* Analytics Dialog */}
         <Dialog open={showAnalytics} onOpenChange={setShowAnalytics}>
@@ -977,12 +1478,19 @@ const FacultyDashboard = () => {
                           <div key={index} className="p-4 bg-muted/50 rounded-lg">
                             <div className="flex items-center justify-between mb-3">
                               <div className="font-medium">
-                                {new Date(session.date).toLocaleDateString('en-US', {
+                                <div>{new Date(session.date).toLocaleDateString('en-US', {
                                   weekday: 'long',
                                   year: 'numeric',
                                   month: 'long',
                                   day: 'numeric'
-                                })}
+                                })}</div>
+                                <div className="text-sm text-muted-foreground font-normal">
+                                  Session: {new Date(session.timestamp).toLocaleTimeString('en-US', {
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                    hour12: true
+                                  })}
+                                </div>
                               </div>
                               <div className="text-lg font-bold">
                                 {session.totalStudents > 0 ? ((session.presentCount / session.totalStudents) * 100).toFixed(1) : 0}%
@@ -1039,7 +1547,7 @@ const FacultyDashboard = () => {
                     <CardContent>
                       <div className="space-y-3 max-h-60 overflow-y-auto">
                         {analyticsData.studentAttendance.map((student: any, index: number) => (
-                          <div key={index} className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
+                          <div key={student.student_id || index} className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
                             <div className="flex items-center gap-3">
                               <div className={`w-3 h-3 rounded-full ${
                                 student.attendancePercentage >= 90 ? 'bg-green-500' :
@@ -1047,9 +1555,9 @@ const FacultyDashboard = () => {
                                 'bg-red-500'
                               }`} />
                               <div>
-                                <div className="font-medium">{student.student?.name}</div>
+                                <div className="font-medium">{student.student_name}</div>
                                 <div className="text-sm text-muted-foreground">
-                                  ID: {student.student?.unique_id}
+                                  ID: {student.student_unique_id}
                                 </div>
                               </div>
                             </div>
@@ -1108,21 +1616,36 @@ const FacultyDashboard = () => {
                       <div className="flex items-center justify-between">
                         <div 
                           className="flex-1 cursor-pointer"
-                          onClick={() => handleViewSessionDetail(session.id, session.date)}
+                          onClick={() => handleViewSessionDetail(session.id, session.timestamp || session.date)}
                         >
-                          <h4 className="font-medium">
-                            {new Date(session.date).toLocaleDateString('en-US', {
-                              weekday: 'long',
-                              year: 'numeric',
-                              month: 'long',
-                              day: 'numeric'
-                            })}
-                          </h4>
+                          <div className="flex items-center justify-between mb-2">
+                            <h4 className="font-medium">
+                              {new Date(session.date).toLocaleDateString('en-US', {
+                                weekday: 'long',
+                                year: 'numeric',
+                                month: 'long',
+                                day: 'numeric'
+                              })}
+                            </h4>
+                            <span className="text-sm font-medium bg-blue-100 text-blue-800 px-2 py-1 rounded-md">
+                              {new Date(session.timestamp).toLocaleTimeString('en-US', {
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                hour12: true
+                              })}
+                            </span>
+                          </div>
                           <p className="text-sm text-muted-foreground">
-                            QR Generated at: {new Date(session.qr_generated_at).toLocaleTimeString()}
+                            Session created at: {new Date(session.timestamp).toLocaleString('en-US', {
+                              month: 'short',
+                              day: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                              hour12: true
+                            })}
                           </p>
                           <p className="text-sm text-muted-foreground">
-                            Students Present: {session.present_count}
+                            Students Present: <span className="font-medium text-green-600">{session.present_count}</span>
                           </p>
                         </div>
                         <div className="flex items-center gap-2">
@@ -1131,25 +1654,12 @@ const FacultyDashboard = () => {
                             size="sm"
                             onClick={(e) => {
                               e.stopPropagation();
-                              handleDownloadFromSessionsList(session.date, 'summary');
-                            }}
-                            title="Download Summary Report"
-                          >
-                            <Download className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDownloadFromSessionsList(session.date, 'detailed');
+                              handleDownloadFromSessionsList(session.timestamp || session.date, 'detailed');
                             }}
                             title="Download Detailed Report"
                           >
-                            <Download className="h-4 w-4 mr-1" />
-                            Detailed
+                            <Download className="h-4 w-4" />
                           </Button>
-                          <Calendar className="h-5 w-5 text-muted-foreground" />
                         </div>
                       </div>
                     </div>
@@ -1172,11 +1682,14 @@ const FacultyDashboard = () => {
             <DialogHeader>
               <DialogTitle>Session Attendance Details</DialogTitle>
               <DialogDescription>
-                Detailed attendance for {selectedSessionDate ? new Date(selectedSessionDate).toLocaleDateString('en-US', {
+                Detailed attendance for {selectedSessionDate ? new Date(selectedSessionDate).toLocaleString('en-US', {
                   weekday: 'long',
                   year: 'numeric',
                   month: 'long',
-                  day: 'numeric'
+                  day: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  hour12: true
                 }) : 'Selected Session'}
               </DialogDescription>
             </DialogHeader>
@@ -1271,6 +1784,438 @@ const FacultyDashboard = () => {
               </div>
               <Button variant="outline" onClick={() => setShowSessionDetailDialog(false)}>
                 Close
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Manual Attendance Dialog */}
+        <Dialog open={showManualAttendance} onOpenChange={setShowManualAttendance}>
+          <DialogContent className="max-w-[95vw] sm:max-w-2xl max-h-[80vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <UserCheck className="h-5 w-5" />
+                Manual Attendance - {selectedManualAttendanceClass?.class_name} ({selectedManualAttendanceClass?.section})
+              </DialogTitle>
+              <DialogDescription>
+                Mark attendance for students enrolled in this class. Today's date: {new Date().toLocaleDateString()}
+              </DialogDescription>
+            </DialogHeader>
+            
+            {loadingStudents ? (
+              <div className="flex items-center justify-center py-8">
+                <div className="text-center">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-2"></div>
+                  <p className="text-sm text-muted-foreground">Loading students...</p>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {enrolledStudents.length === 0 ? (
+                  <div className="text-center py-8">
+                    <Users className="h-12 w-12 text-muted-foreground mx-auto mb-2" />
+                    <p className="text-muted-foreground">No students enrolled in this class.</p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex justify-between items-center mb-4">
+                      <p className="text-sm font-medium">Total Students: {enrolledStudents.length}</p>
+                      <div className="flex gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            const newData: {[key: string]: 'present' | 'absent'} = {};
+                            enrolledStudents.forEach(student => {
+                              newData[student.student_id] = 'present';
+                            });
+                            setManualAttendanceData(newData);
+                          }}
+                        >
+                          Mark All Present
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            const newData: {[key: string]: 'present' | 'absent'} = {};
+                            enrolledStudents.forEach(student => {
+                              newData[student.student_id] = 'absent';
+                            });
+                            setManualAttendanceData(newData);
+                          }}
+                        >
+                          Mark All Absent
+                        </Button>
+                      </div>
+                    </div>
+                    
+                    <div className="space-y-3 max-h-60 overflow-y-auto">
+                      {enrolledStudents.map((student: any) => (
+                        <Card key={student.student_id} className="p-3">
+                          <div className="flex items-center justify-between">
+                            <div className="flex-1">
+                              <p className="font-medium">{student.profiles?.name || 'Unknown'}</p>
+                              <p className="text-sm text-muted-foreground">{student.profiles?.unique_id || 'N/A'}</p>
+                            </div>
+                            <div className="flex gap-2">
+                              <Button
+                                variant={manualAttendanceData[student.student_id] === 'present' ? 'default' : 'outline'}
+                                size="sm"
+                                onClick={() => handleAttendanceToggle(student.student_id, 'present')}
+                                className={manualAttendanceData[student.student_id] === 'present' ? 'bg-green-600 hover:bg-green-700' : ''}
+                              >
+                                Present
+                              </Button>
+                              <Button
+                                variant={manualAttendanceData[student.student_id] === 'absent' ? 'default' : 'outline'}
+                                size="sm"
+                                onClick={() => handleAttendanceToggle(student.student_id, 'absent')}
+                                className={manualAttendanceData[student.student_id] === 'absent' ? 'bg-red-600 hover:bg-red-700' : ''}
+                              >
+                                Absent
+                              </Button>
+                            </div>
+                          </div>
+                        </Card>
+                      ))}
+                    </div>
+                    
+                    <div className="flex justify-between items-center pt-4 border-t">
+                      <div className="text-sm text-muted-foreground">
+                        Present: {Object.values(manualAttendanceData).filter(status => status === 'present').length} | 
+                        Absent: {Object.values(manualAttendanceData).filter(status => status === 'absent').length}
+                      </div>
+                      <div className="flex gap-2">
+                        <Button 
+                          variant="outline" 
+                          onClick={() => setShowManualAttendance(false)}
+                          disabled={submittingAttendance}
+                        >
+                          Cancel
+                        </Button>
+                        <Button 
+                          onClick={handleSubmitManualAttendance}
+                          disabled={submittingAttendance}
+                          className="bg-gradient-to-r from-orange-500 to-amber-600 hover:from-orange-600 hover:to-amber-700"
+                        >
+                          {submittingAttendance ? 'Submitting...' : 'Submit Attendance'}
+                        </Button>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+
+        {/* Coming Soon Dialog */}
+        <Dialog open={showComingSoon} onOpenChange={setShowComingSoon}>
+          <DialogContent className="max-w-[95vw] sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-center justify-center">
+                <Camera className="h-6 w-6 text-purple-600" />
+                Face Recognition Attendance
+              </DialogTitle>
+            </DialogHeader>
+            
+            <div className="text-center py-6">
+              <div className="mx-auto w-16 h-16 bg-gradient-to-br from-purple-100 to-indigo-100 rounded-full flex items-center justify-center mb-4">
+                <Camera className="h-8 w-8 text-purple-600" />
+              </div>
+              
+              <h3 className="text-lg font-semibold mb-2">Coming Soon!</h3>
+              <p className="text-muted-foreground mb-6">
+                Face recognition attendance feature is currently in development. This will allow automatic attendance marking using advanced facial recognition technology.
+              </p>
+              
+              <Button 
+                onClick={() => setShowComingSoon(false)}
+                className="bg-gradient-to-r from-purple-500 to-indigo-600 hover:from-purple-600 hover:to-indigo-700 text-white"
+              >
+                Got it!
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Attendance Session Dialog */}
+        <Dialog open={showAttendanceSession} onOpenChange={setShowAttendanceSession}>
+          <DialogContent className="max-w-[95vw] sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Play className="h-5 w-5 text-emerald-600" />
+                Start Attendance Session
+              </DialogTitle>
+              <DialogDescription>
+                Choose your preferred method to mark attendance for {currentSessionClass?.class_name} ({currentSessionClass?.section})
+              </DialogDescription>
+            </DialogHeader>
+            
+            <div className="space-y-3 py-4">
+              <Button
+                onClick={() => {
+                  setShowAttendanceSession(false);
+                  handleGenerateQR(currentSessionClass?.id);
+                }}
+                disabled={isGeneratingQR}
+                className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-200 justify-start"
+                size="lg"
+              >
+                <QrCode className="h-5 w-5 mr-3" />
+                <div className="text-left">
+                  <div className="font-medium">Generate QR Code</div>
+                  <div className="text-xs opacity-90">Students scan QR to mark attendance</div>
+                </div>
+              </Button>
+              
+              <Button
+                onClick={() => {
+                  setShowAttendanceSession(false);
+                  handleManualAttendance(currentSessionClass);
+                }}
+                className="w-full bg-gradient-to-r from-orange-500 to-amber-600 hover:from-orange-600 hover:to-amber-700 text-white shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-200 justify-start"
+                size="lg"
+              >
+                <UserCheck className="h-5 w-5 mr-3" />
+                <div className="text-left">
+                  <div className="font-medium">Manual Attendance</div>
+                  <div className="text-xs opacity-90">Mark attendance manually for each student</div>
+                </div>
+              </Button>
+              
+              <Button
+                onClick={() => {
+                  setShowAttendanceSession(false);
+                  handleHybridAttendance(currentSessionClass);
+                }}
+                className="w-full bg-gradient-to-r from-blue-500 to-cyan-600 hover:from-blue-600 hover:to-cyan-700 text-white shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-200 justify-start"
+                size="lg"
+              >
+                <Shuffle className="h-5 w-5 mr-3" />
+                <div className="text-left">
+                  <div className="font-medium">Hybrid Attendance</div>
+                  <div className="text-xs opacity-90">QR code + manual marking in one session</div>
+                </div>
+              </Button>
+              
+              <Button
+                onClick={() => {
+                  setShowAttendanceSession(false);
+                  setShowComingSoon(true);
+                }}
+                className="w-full bg-gradient-to-r from-purple-500 to-indigo-600 hover:from-purple-600 hover:to-indigo-700 text-white shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-200 justify-start"
+                size="lg"
+              >
+                <Camera className="h-5 w-5 mr-3" />
+                <div className="text-left">
+                  <div className="font-medium">Face Recognition</div>
+                  <div className="text-xs opacity-90">Automatic attendance via facial recognition</div>
+                </div>
+              </Button>
+            </div>
+            
+            <div className="flex justify-end pt-2">
+              <Button 
+                variant="outline" 
+                onClick={() => setShowAttendanceSession(false)}
+              >
+                Cancel
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Hybrid Attendance Dialog */}
+        <Dialog open={showHybridAttendance} onOpenChange={setShowHybridAttendance}>
+          <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Shuffle className="h-6 w-6 text-blue-600" />
+                Hybrid Attendance Session
+              </DialogTitle>
+              <DialogDescription>
+                {currentSessionClass && (
+                  <div className="mb-4 p-4 bg-gradient-to-r from-blue-50 to-cyan-50 rounded-lg border">
+                    <div className="font-medium text-blue-800">
+                      {currentSessionClass.class_name} - Section {currentSessionClass.section}
+                    </div>
+                    <div className="text-sm text-blue-600">
+                      Class Code: <span className="font-mono">{currentSessionClass.class_code}</span>
+                    </div>
+                    <div className="text-sm text-blue-600 mt-2">
+                      Students can scan the QR code or you can mark them manually
+                    </div>
+                  </div>
+                )}
+              </DialogDescription>
+            </DialogHeader>
+            
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* QR Code Section */}
+              <div className="space-y-4">
+                <div className="p-4 border rounded-lg bg-gradient-to-br from-emerald-50 to-green-50">
+                  <h3 className="font-semibold text-emerald-800 mb-3 flex items-center gap-2">
+                    <QrCode className="h-5 w-5" />
+                    QR Code for Students
+                  </h3>
+                  {hybridQrCodeUrl ? (
+                    <div className="text-center">
+                      <img src={hybridQrCodeUrl} alt="QR Code" className="mx-auto w-48 h-48 border rounded-lg shadow-md" />
+                      <p className="text-sm text-emerald-600 mt-2">Students can scan this QR code to mark attendance</p>
+                      <p className="text-xs text-emerald-500 mt-1">QR code expires in 5 minutes</p>
+                    </div>
+                  ) : (
+                    <div className="text-center py-8">
+                      <div className="animate-spin h-8 w-8 border-4 border-emerald-500 border-t-transparent rounded-full mx-auto mb-2"></div>
+                      <p className="text-sm text-emerald-600">Generating QR Code...</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Live Attendance from QR Scans */}
+                <div className="p-4 border rounded-lg bg-gradient-to-br from-green-50 to-emerald-50">
+                  <h3 className="font-semibold text-green-800 mb-3 flex items-center gap-2">
+                    <CheckCircle className="h-5 w-5" />
+                    Students Marked via QR ({hybridAttendanceRecords.length})
+                  </h3>
+                  {hybridAttendanceRecords.length > 0 ? (
+                    <div className="space-y-2 max-h-40 overflow-y-auto">
+                      {hybridAttendanceRecords.map((record, index) => (
+                        <div key={index} className="flex items-center justify-between p-2 bg-green-100 rounded text-sm">
+                          <div>
+                            <div className="font-medium text-green-800">{record.profiles?.name}</div>
+                            <div className="text-green-600">{record.profiles?.unique_id}</div>
+                          </div>
+                          <div className="text-green-600 font-medium">
+                            {new Date(record.timestamp).toLocaleTimeString()}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-green-600">No students have scanned the QR code yet</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Manual Attendance Section */}
+              <div className="space-y-4">
+                <div className="p-4 border rounded-lg bg-gradient-to-br from-orange-50 to-amber-50">
+                  <h3 className="font-semibold text-orange-800 mb-3 flex items-center gap-2">
+                    <UserCheck className="h-5 w-5" />
+                    Manual Attendance
+                  </h3>
+                  {loadingHybridStudents ? (
+                    <div className="text-center py-8">
+                      <div className="animate-spin h-6 w-6 border-2 border-orange-500 border-t-transparent rounded-full mx-auto mb-2"></div>
+                      <p className="text-sm text-orange-600">Loading students...</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2 max-h-96 overflow-y-auto">
+                      {hybridEnrolledStudents.map((student) => {
+                        const isMarkedByQR = hybridAttendanceRecords.some(record => record.student_id === student.student_id);
+                        const currentStatus = hybridManualAttendanceData[student.student_id] || 'pending';
+                        
+                        return (
+                          <div key={student.student_id} className={`p-3 rounded-lg border ${
+                            isMarkedByQR ? 'bg-green-100 border-green-300' : 'bg-white border-gray-200'
+                          }`}>
+                            <div className="flex items-center justify-between">
+                              <div className="flex-1">
+                                <div className="font-medium text-gray-800">{student.name}</div>
+                                <div className="text-sm text-gray-600">{student.unique_id}</div>
+                                {isMarkedByQR && (
+                                  <div className="text-xs text-green-600 font-medium mt-1">
+                                    ✓ Already marked via QR code
+                                  </div>
+                                )}
+                              </div>
+                              {!isMarkedByQR && (
+                                <div className="flex gap-2">
+                                  <Button
+                                    size="sm"
+                                    variant={currentStatus === 'present' ? 'default' : 'outline'}
+                                    className={currentStatus === 'present' ? 'bg-green-600 hover:bg-green-700' : 'border-green-600 text-green-600 hover:bg-green-50'}
+                                    onClick={() => handleHybridAttendanceToggle(student.student_id, 'present')}
+                                  >
+                                    Present
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant={currentStatus === 'absent' ? 'destructive' : 'outline'}
+                                    className={currentStatus === 'absent' ? '' : 'border-red-600 text-red-600 hover:bg-red-50'}
+                                    onClick={() => handleHybridAttendanceToggle(student.student_id, 'absent')}
+                                  >
+                                    Absent
+                                  </Button>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Summary Section */}
+            <div className="mt-4 p-4 bg-gradient-to-r from-gray-50 to-slate-50 rounded-lg border">
+              <h3 className="font-semibold text-gray-800 mb-2">Session Summary</h3>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-blue-600">{hybridEnrolledStudents.length}</div>
+                  <div className="text-gray-600">Total Students</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-green-600">{hybridAttendanceRecords.length}</div>
+                  <div className="text-gray-600">QR Scanned</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-orange-600">
+                    {(() => {
+                      const manuallyMarked = Object.entries(hybridManualAttendanceData).filter(([studentId, status]) => 
+                        (status === 'present' || status === 'absent') && 
+                        !hybridAttendanceRecords.find(record => record.student_id === studentId)
+                      );
+                      return manuallyMarked.length;
+                    })()}
+                  </div>
+                  <div className="text-gray-600">Manual Marked</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-red-600">
+                    {(() => {
+                      const qrMarked = hybridAttendanceRecords.length;
+                      const manualMarked = Object.entries(hybridManualAttendanceData).filter(([studentId, status]) => 
+                        (status === 'present' || status === 'absent') && 
+                        !hybridAttendanceRecords.find(record => record.student_id === studentId)
+                      ).length;
+                      return Math.max(0, hybridEnrolledStudents.length - qrMarked - manualMarked);
+                    })()}
+                  </div>
+                  <div className="text-gray-600">Pending</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-between pt-4 border-t">
+              <Button 
+                variant="outline" 
+                onClick={() => setShowHybridAttendance(false)}
+              >
+                Cancel
+              </Button>
+              <Button 
+                onClick={handleSubmitHybridAttendance}
+                disabled={submittingHybridAttendance}
+                className="bg-blue-600 hover:bg-blue-700"
+              >
+                {submittingHybridAttendance && <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full mr-2" />}
+                Complete Hybrid Session
               </Button>
             </div>
           </DialogContent>

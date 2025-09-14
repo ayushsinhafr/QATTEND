@@ -7,8 +7,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { GraduationCap, LogOut, Plus, QrCode, Camera, BookOpen, Calendar, AlertTriangle, Clock, CheckCircle } from "lucide-react";
+import { GraduationCap, LogOut, Plus, QrCode, Camera, BookOpen, Calendar, AlertTriangle, Clock, CheckCircle, User } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import QrScanner from "qr-scanner";
 
@@ -290,59 +291,67 @@ const StudentDashboard = () => {
     <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-blue-50 to-indigo-50 dark:from-slate-900 dark:via-slate-800 dark:to-slate-900">
       {/* Enhanced Header */}
       <header className="border-b border-white/20 bg-white/80 backdrop-blur-xl shadow-lg shadow-emerald-500/10 dark:border-slate-700/20 dark:bg-slate-900/80 dark:shadow-slate-900/20">
-        <div className="container mx-auto px-6 py-6">
+        <div className="container mx-auto px-4 sm:px-6 py-4 sm:py-6">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2 sm:gap-4">
               <div className="relative">
                 <div className="absolute inset-0 bg-gradient-to-r from-emerald-600 to-blue-600 rounded-xl blur opacity-75"></div>
-                <img src="/LOGO.png" alt="AttendEase Logo" className="relative h-12 w-12 rounded-xl shadow-lg" />
+                <img src="/LOGO.png" alt="AttendEase Logo" className="relative h-8 w-8 sm:h-12 sm:w-12 rounded-xl shadow-lg" />
               </div>
-              <div>
-                <h1 className="text-3xl font-bold bg-gradient-to-r from-emerald-600 to-blue-600 bg-clip-text text-transparent">
+              <div className="text-left">
+                <h1 className="text-lg sm:text-3xl font-bold bg-gradient-to-r from-emerald-600 to-blue-600 bg-clip-text text-transparent">
                   AttendEase
                 </h1>
-                <p className="text-sm font-medium text-slate-600">Student Dashboard</p>
+                <p className="text-xs sm:text-sm font-medium text-slate-600 dark:text-slate-400">Student Dashboard</p>
               </div>
             </div>
-            <div className="flex items-center gap-6">
-              <div className="text-right">
-                <p className="font-semibold text-slate-700 dark:text-slate-300">{profile.name}</p>
-                <p className="text-sm text-slate-500 dark:text-slate-400">{profile.unique_id}</p>
-              </div>
+            <div className="flex items-center gap-2 sm:gap-3">
               <ThemeToggle />
-              <Button 
-                variant="outline" 
-                size="sm" 
-                onClick={handleSignOut}
-                className="border-slate-200 hover:border-red-300 hover:text-red-600 hover:bg-red-50 transition-all duration-200 dark:border-slate-600 dark:hover:border-red-400 dark:hover:bg-red-900/20"
-              >
-                <LogOut className="h-4 w-4 mr-2" />
-                Sign Out
-              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm" className="border-slate-200 hover:border-slate-300 hover:bg-slate-50 dark:border-slate-600 dark:hover:border-slate-500 dark:hover:bg-slate-800 transition-all duration-200">
+                    <User className="h-4 w-4 sm:mr-2" />
+                    <span className="hidden sm:inline">{profile.name}</span>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56">
+                  <DropdownMenuLabel>
+                    <div className="flex flex-col space-y-1">
+                      <p className="text-sm font-medium leading-none">{profile.name}</p>
+                      <p className="text-xs leading-none text-muted-foreground">{profile.unique_id}</p>
+                    </div>
+                  </DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={handleSignOut} className="text-red-600 dark:text-red-400 cursor-pointer">
+                    <LogOut className="mr-2 h-4 w-4" />
+                    <span>Sign Out</span>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </div>
         </div>
       </header>
 
-      <main className="container mx-auto px-6 py-12">
+      <main className="container mx-auto px-4 sm:px-6 py-6 sm:py-12">
         {/* Enhanced Actions Bar */}
-        <div className="flex justify-between items-center mb-12">
-          <div>
-            <h2 className="text-4xl font-bold bg-gradient-to-r from-slate-800 to-slate-600 bg-clip-text text-transparent dark:from-slate-200 dark:to-slate-400 mb-2">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-6 sm:gap-4 mb-8 sm:mb-12">
+          <div className="w-full sm:w-auto text-center sm:text-left">
+            <h2 className="text-2xl sm:text-4xl font-bold bg-gradient-to-r from-slate-800 to-slate-600 bg-clip-text text-transparent dark:from-slate-200 dark:to-slate-400 mb-2">
               My Classes
             </h2>
-            <p className="text-lg text-slate-600 dark:text-slate-400">Join classes and mark your attendance seamlessly</p>
+            <p className="text-sm sm:text-lg text-slate-600 dark:text-slate-400">Join classes and mark your attendance seamlessly</p>
           </div>
           
-          <div className="flex gap-4">
+          <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 w-full sm:w-auto">
             <Dialog open={showJoinClass} onOpenChange={setShowJoinClass}>
               <DialogTrigger asChild>
                 <Button 
                   variant="outline" 
                   size="lg"
-                  className="border-emerald-200 text-emerald-700 hover:bg-emerald-50 hover:border-emerald-300 px-6 py-3 transition-all duration-200 dark:border-emerald-600 dark:text-emerald-400 dark:hover:bg-emerald-900/20 dark:hover:border-emerald-500"
+                  className="border-emerald-200 text-emerald-700 hover:bg-emerald-50 hover:border-emerald-300 px-4 sm:px-6 py-3 transition-all duration-200 dark:border-emerald-600 dark:text-emerald-400 dark:hover:bg-emerald-900/20 dark:hover:border-emerald-500 w-full sm:w-auto"
                 >
-                  <Plus className="h-5 w-5 mr-2" />
+                  <Plus className="h-4 w-4 sm:h-5 sm:w-5 mr-2" />
                   Join Class
                 </Button>
               </DialogTrigger>
@@ -388,9 +397,9 @@ const StudentDashboard = () => {
               <DialogTrigger asChild>
                 <Button 
                   size="lg"
-                  className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-200 px-6 py-3"
+                  className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-200 px-4 sm:px-6 py-3 w-full sm:w-auto"
                 >
-                  <QrCode className="h-5 w-5 mr-2" />
+                  <QrCode className="h-4 w-4 sm:h-5 sm:w-5 mr-2" />
                   Scan QR Code
                 </Button>
               </DialogTrigger>
@@ -689,7 +698,7 @@ const StudentDashboard = () => {
             </CardContent>
           </Card>
         ) : (
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-6 lg:gap-8">
             {enrollments.map((enrollment) => (
               <Card 
                 key={enrollment.id} 

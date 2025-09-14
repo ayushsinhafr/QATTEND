@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "./useAuth";
 import { useToast } from "./use-toast";
+import { AttendanceSessionManager } from "@/lib/sessionManager";
 
 export interface Class {
   id: string;
@@ -268,46 +269,109 @@ export const useClasses = () => {
 
   // Generate QR token for attendance
   const generateQRToken = useCallback(async (classId: string): Promise<string | null> => {
+    // Input validation
+    if (!classId || typeof classId !== 'string' || classId.trim() === '') {
+      console.error('Invalid classId provided to generateQRToken:', classId);
+      toast({
+        title: "Error",
+        description: "Invalid class ID provided",
+        variant: "destructive",
+      });
+      return null;
+    }
+
+    if (!user || profile?.role !== 'faculty') {
+      console.error('Unauthorized access to generateQRToken');
+      toast({
+        title: "Error",
+        description: "You must be logged in as faculty to generate QR codes",
+        variant: "destructive",
+      });
+      return null;
+    }
+
     try {
       console.log('Generating QR token for class:', classId);
-      const token = `${classId}:${Date.now()}`;
-      const expiration = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
+      
+      // Verify the class exists and belongs to the current faculty
+      const { data: classData, error: classError } = await supabase
+        .from('classes')
+        .select('id, class_name, faculty_id')
+        .eq('id', classId)
+        .eq('faculty_id', user.id)
+        .maybeSingle();
 
-      const { error } = await supabase
+      if (classError) {
+        console.error('Error verifying class:', classError);
+        throw new Error('Failed to verify class ownership');
+      }
+
+      if (!classData) {
+        console.error('Class not found or not owned by current faculty:', classId);
+        toast({
+          title: "Error",
+          description: "Class not found or you don't have permission to generate QR for this class",
+          variant: "destructive",
+        });
+        return null;
+      }
+      
+      // Create a unique session with timestamp
+      const sessionTimestamp = new Date();
+      const sessionId = `${classId}:${sessionTimestamp.getTime()}`;
+      const token = sessionId;
+      const expiration = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
+      
+      // Format session date with time for unique identification
+      const sessionDateWithTime = sessionTimestamp.toISOString();
+
+      const { error: updateError } = await supabase
         .from('classes')
         .update({
           qr_token: token,
           qr_expiration: expiration.toISOString()
         })
-        .eq('id', classId);
+        .eq('id', classId)
+        .eq('faculty_id', user.id); // Double-check ownership
 
-      if (error) throw error;
+      if (updateError) {
+        console.error('Error updating class with QR token:', updateError);
+        throw new Error('Failed to save QR token to database');
+      }
 
-      console.log('QR token generated successfully:', token);
+      console.log('QR token generated successfully for class:', classData.class_name);
+      console.log('New session created at:', sessionDateWithTime);
       
       // Set timer to auto-mark absent students when QR expires
       setTimeout(async () => {
         try {
-          await markAbsentStudents(classId);
-          console.log('Auto-marked absent students for class:', classId);
+          await markAbsentStudents(classId, sessionDateWithTime);
+          console.log('Auto-marked absent students for session:', sessionDateWithTime);
         } catch (error) {
           console.error('Error auto-marking absent students:', error);
         }
       }, 5 * 60 * 1000); // 5 minutes
 
+      toast({
+        title: "Success",
+        description: `QR code generated for ${classData.class_name}. Valid for 5 minutes.`,
+      });
+
       return token;
     } catch (error) {
       console.error('Error generating QR token:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
       toast({
         title: "Error",
-        description: "Failed to generate QR code",
+        description: `Failed to generate QR code: ${errorMessage}`,
         variant: "destructive",
       });
       return null;
     }
-  }, [toast]);
+  }, [user, profile?.role, toast]);
 
   // Get live attendance data for a class session
+  // Get live attendance data for a class session with optimized queries
   const getLiveAttendance = useCallback(async (classId: string, sessionDate?: string) => {
     try {
       // Format date as DD-MM-YYYY to match database
@@ -315,59 +379,62 @@ export const useClasses = () => {
       const formattedDate = `${today.getDate().toString().padStart(2, '0')}-${(today.getMonth()+1).toString().padStart(2, '0')}-${today.getFullYear()}`;
       const dateFilter = sessionDate || formattedDate;
       
-      // Get class information including student_strength
-      const { data: classData, error: classError } = await supabase
-        .from('classes')
-        .select('student_strength')
-        .eq('id', classId)
-        .maybeSingle();
+      // Optimized query using new composite index idx_attendance_class_date
+      // Combined query to get class info and attendance in parallel for better performance
+      const [classResult, attendanceResult] = await Promise.all([
+        supabase
+          .from('classes')
+          .select('student_strength, class_name')
+          .eq('id', classId)
+          .maybeSingle(),
+        
+        supabase
+          .from('attendance')
+          .select(`
+            student_id,
+            status,
+            timestamp,
+            profiles:student_id (
+              name,
+              unique_id
+            )
+          `)
+          .eq('class_id', classId)
+          .eq('session_date', dateFilter)
+          .order('timestamp', { ascending: false })
+      ]);
 
-      if (classError) throw classError;
+      const { data: classData, error: classError } = classResult;
+      const { data: attendanceData, error: attendanceError } = attendanceResult;
+
+      if (classError) {
+        console.error('Error fetching class:', classError);
+        throw classError;
+      }
       if (!classData) {
         throw new Error('Class not found');
       }
-      
-      // Get attendance records for today
-      const { data: attendanceData, error: attendanceError } = await supabase
-        .from('attendance')
-        .select('*')
-        .eq('class_id', classId)
-        .eq('session_date', dateFilter)
-        .order('timestamp', { ascending: false });
 
       if (attendanceError) {
         console.error('Error fetching attendance:', attendanceError);
         throw attendanceError;
       }
 
-      console.log('Raw attendance data:', attendanceData);
-
-      // Get student details for attendance records
-      const studentIds = attendanceData?.map(a => a.student_id) || [];
-      const { data: attendanceStudents, error: studentsError } = studentIds.length > 0 ? 
-        await supabase
-          .from('profiles')
-          .select('user_id, name, unique_id')
-          .in('user_id', studentIds) : 
-        { data: [], error: null };
-
-      if (studentsError) {
-        console.error('Error fetching student details:', studentsError);
-      }
-
-      // Create a map of student details
-      const studentMap = new Map(attendanceStudents?.map(s => [s.user_id, s] as const) || []);
-
-      // Enhance attendance data with student details
-      const enhancedAttendanceData = attendanceData?.map(a => ({
-        ...a,
-        profiles: studentMap.get(a.student_id) || { name: 'Unknown', unique_id: 'N/A' }
-      })) || [];
-
-      // Get all enrolled students
+      console.log('Optimized attendance query result:', attendanceData?.length, 'records for', classData.class_name);
+      
+      // The attendance data now includes student profiles from the join
+      // No need for separate student lookup query
+      
+      // Get all enrolled students with optimized query using new index
       const { data: enrollmentData, error: enrollmentError } = await supabase
         .from('enrollments')
-        .select('*')
+        .select(`
+          student_id,
+          profiles:student_id (
+            name,
+            unique_id
+          )
+        `)
         .eq('class_id', classId);
 
       if (enrollmentError) {
@@ -375,45 +442,24 @@ export const useClasses = () => {
         throw enrollmentError;
       }
 
-      console.log('Raw enrollment data:', enrollmentData);
+      console.log('Optimized enrollment query result:', enrollmentData?.length, 'enrolled students');
 
-      // Get student details for enrolled students
-      const enrolledStudentIds = enrollmentData?.map(e => e.student_id) || [];
-      const { data: enrolledStudents, error: enrolledStudentsError } = enrolledStudentIds.length > 0 ? 
-        await supabase
-          .from('profiles')
-          .select('user_id, name, unique_id')
-          .in('user_id', enrolledStudentIds) : 
-        { data: [], error: null };
-
-      if (enrolledStudentsError) {
-        console.error('Error fetching enrolled student details:', enrolledStudentsError);
-      }
-
-      // Create a map of enrolled student details
-      const enrolledStudentMap = new Map(enrolledStudents?.map(s => [s.user_id, s] as const) || []);
-
-      // Enhance enrollment data with student details
-      const enhancedEnrollmentData = enrollmentData?.map(e => ({
-        ...e,
-        profiles: enrolledStudentMap.get(e.student_id) || { name: 'Unknown', unique_id: 'N/A' }
-      })) || [];
-
-      // Use class strength as total capacity, actual enrollments for calculations
-      const totalClassStrength = classData?.student_strength || 0;
-      const actualEnrolled = enhancedEnrollmentData?.length || 0;
-
-      // Create attendance summary using enhanced data
-      const presentStudents = enhancedAttendanceData?.filter(a => a.status === 'present') || [];
-      const absentStudents = enhancedAttendanceData?.filter(a => a.status === 'absent') || [];
-      const attendedStudentIds = new Set(enhancedAttendanceData?.map(a => a.student_id) || []);
+      // Process attendance summary using optimized data
+      // attendanceData already includes profile information from the join
+      const presentStudents = attendanceData?.filter(a => a.status === 'present') || [];
+      const absentStudents = attendanceData?.filter(a => a.status === 'absent') || [];
+      const attendedStudentIds = new Set(attendanceData?.map(a => a.student_id) || []);
       
       // Find students who haven't marked attendance yet (only from enrolled students)
-      const notMarkedStudents = enhancedEnrollmentData?.filter(e => 
+      const notMarkedStudents = enrollmentData?.filter(e => 
         !attendedStudentIds.has(e.student_id)
       ) || [];
 
-      console.log('Processed attendance data:', {
+      // Use class strength as total capacity, actual enrollments for calculations
+      const totalClassStrength = classData?.student_strength || 0;
+      const actualEnrolled = enrollmentData?.length || 0;
+
+      console.log('Processed attendance data with optimization:', {
         presentStudents: presentStudents.length,
         absentStudents: absentStudents.length,
         notMarkedStudents: notMarkedStudents.length,
@@ -442,50 +488,63 @@ export const useClasses = () => {
     }
   }, []);
 
-  // Function to mark absent students who didn't mark attendance
-  const markAbsentStudents = useCallback(async (classId: string) => {
+  // Function to mark absent students who didn't mark attendance (optimized)
+  const markAbsentStudents = useCallback(async (classId: string, sessionDateTime?: string) => {
     try {
-      const today = new Date().toISOString().split('T')[0];
+      // Use session date time or fallback to today's date format
+      const sessionDate = sessionDateTime || new Date().toISOString().split('T')[0];
       
-      // Get all enrolled students
-      const { data: enrollments, error: enrollError } = await supabase
-        .from('enrollments')
-        .select('student_id')
-        .eq('class_id', classId);
+      // Optimized query using new composite indexes
+      // Get enrolled students and existing attendance in parallel
+      const [enrollmentsResult, attendanceResult] = await Promise.all([
+        supabase
+          .from('enrollments')
+          .select('student_id')
+          .eq('class_id', classId),
+        
+        supabase
+          .from('attendance')
+          .select('student_id')
+          .eq('class_id', classId)
+          .eq('session_date', sessionDate)
+      ]);
+
+      const { data: enrollments, error: enrollError } = enrollmentsResult;
+      const { data: existingAttendance, error: existingAttendanceError } = attendanceResult;
 
       if (enrollError) throw enrollError;
+      if (existingAttendanceError) throw existingAttendanceError;
 
-      // Get students who already marked attendance today
-      const { data: presentStudents, error: attendanceError } = await supabase
-        .from('attendance')
-        .select('student_id')
-        .eq('class_id', classId)
-        .eq('session_date', today);
-
-      if (attendanceError) throw attendanceError;
-
-      const presentStudentIds = new Set(presentStudents?.map(s => s.student_id) || []);
+      // Create set of students who already have attendance records (optimized)
+      const attendedStudentIds = new Set(existingAttendance?.map(s => s.student_id) || []);
       
       // Find students who need to be marked absent
-      const absentStudents = enrollments?.filter(e => !presentStudentIds.has(e.student_id)) || [];
+      const absentStudents = enrollments?.filter(e => !attendedStudentIds.has(e.student_id)) || [];
 
-      // Mark absent students
+      // Mark absent students with batch insert for better performance
       if (absentStudents.length > 0) {
+        const sessionDateFormatted = sessionDateTime ? sessionDateTime.split('T')[0] : sessionDate;
+        const timestampFormatted = sessionDateTime || new Date().toISOString();
+        
         const absentRecords = absentStudents.map(student => ({
           student_id: student.student_id,
           class_id: classId,
-          status: 'absent',
-          session_date: today,
-          timestamp: new Date().toISOString()
+          status: 'absent' as const,
+          session_date: sessionDateFormatted,
+          timestamp: timestampFormatted
         }));
 
+        // Use upsert for better performance and conflict handling
         const { error: insertError } = await supabase
           .from('attendance')
-          .insert(absentRecords);
+          .upsert(absentRecords, { 
+            onConflict: 'student_id,class_id,session_date',
+            ignoreDuplicates: true 
+          });
 
         if (insertError) throw insertError;
         
-        console.log(`Marked ${absentStudents.length} students as absent`);
+        console.log(`Optimized batch insert: Marked ${absentStudents.length} students as absent for session:`, sessionDateFormatted);
         return absentStudents.length;
       }
       return 0;
@@ -603,25 +662,56 @@ export const useClasses = () => {
 
       console.log('✅ [markAttendanceDirect] Student is enrolled');
 
-      // Check if attendance was already marked today  
-      const sessionDate = new Date().toISOString().split('T')[0];
-      console.log('📅 [markAttendanceDirect] Checking attendance for date:', sessionDate);
+      // Decode session information from QR token using session manager
+      const tokenInfo = AttendanceSessionManager.decodeQRToken(token);
+      if (!tokenInfo || !tokenInfo.isValid) {
+        console.log('❌ [markAttendanceDirect] Invalid token format');
+        toast({
+          title: "Invalid QR Code",
+          description: "The QR code format is invalid. Please scan a valid attendance QR code.",
+          variant: "destructive",
+        });
+        return false;
+      }
+
+      const sessionDateTime = tokenInfo.sessionTimestamp;
+      const sessionDate = sessionDateTime.split('T')[0];
       
+      console.log('📅 [markAttendanceDirect] Decoded session info:', { 
+        sessionId: tokenInfo.sessionId,
+        sessionDateTime, 
+        sessionDate,
+        classId: tokenInfo.classId 
+      });
+      
+      // Verify the class ID from token matches the one from database
+      if (tokenInfo.classId !== classData.id) {
+        console.log('❌ [markAttendanceDirect] Class ID mismatch');
+        toast({
+          title: "Invalid QR Code",
+          description: "This QR code is for a different class.",
+          variant: "destructive",
+        });
+        return false;
+      }
+      
+      // Check if attendance was already marked for this specific session
       const { data: existingAttendance } = await supabase
         .from('attendance')
-        .select('id')
+        .select('id, timestamp')
         .eq('student_id', user!.id)
         .eq('class_id', classData.id)
         .eq('session_date', sessionDate)
+        .gte('timestamp', sessionDateTime)
         .maybeSingle();
 
-      console.log('🔍 [markAttendanceDirect] Existing attendance check:', existingAttendance);
+      console.log('🔍 [markAttendanceDirect] Existing attendance check for session:', existingAttendance);
 
       if (existingAttendance) {
-        console.log('⚠️ [markAttendanceDirect] Attendance already marked for today');
+        console.log('⚠️ [markAttendanceDirect] Attendance already marked for this session');
         toast({
           title: "Attendance already marked!",
-          description: "Your attendance for today has already been recorded.",
+          description: "Your attendance for this session has already been recorded.",
         });
         
         // Refresh enrollments to update attendance status
@@ -632,23 +722,34 @@ export const useClasses = () => {
         return true;
       }
 
-      // Mark attendance (insert new record)
+      // Mark attendance (insert new record with session timestamp)
       const attendanceRecord = {
         student_id: user!.id,
         class_id: classData.id,
         status: 'present',
         session_date: sessionDate,
-        timestamp: new Date().toISOString(),
+        timestamp: sessionDateTime,
       };
 
       console.log('💾 [markAttendanceDirect] Inserting attendance record:', attendanceRecord);
 
-        // Use upsert to avoid duplicate key error
-        const { error: attendanceError } = await supabase
-    .from('attendance')
-    .upsert(attendanceRecord, { onConflict: 'student_id,class_id,session_date' });
+      // Try to insert the attendance record
+      const { error: attendanceError } = await supabase
+        .from('attendance')
+        .insert(attendanceRecord);
 
       if (attendanceError) {
+        // If it's a unique constraint violation, handle gracefully
+        if (attendanceError.code === '23505') {
+          console.log('⚠️ [markAttendanceDirect] Attendance already exists for this session');
+          toast({
+            title: "Already Marked",
+            description: "Your attendance for this session has already been recorded.",
+            variant: "default",
+          });
+          return true;
+        }
+        
         console.log('❌ [markAttendanceDirect] Error marking attendance:', {
           message: attendanceError.message,
           details: attendanceError.details,
@@ -872,12 +973,12 @@ export const useClasses = () => {
     try {
       console.log('🔍 [getAttendanceSessions] Starting fetch for class:', classId);
       
-      // Get unique session dates from attendance table
+      // Get attendance data grouped by unique timestamps to support multiple sessions per day
       const { data: attendanceData, error } = await supabase
         .from('attendance')
         .select('session_date, timestamp')
         .eq('class_id', classId)
-        .order('session_date', { ascending: false });
+        .order('timestamp', { ascending: false });
 
       console.log('📊 [getAttendanceSessions] Raw query result:', { attendanceData, error });
 
@@ -893,23 +994,36 @@ export const useClasses = () => {
 
       console.log('✅ [getAttendanceSessions] Found attendance records:', attendanceData.length);
 
-      // Get unique session dates
-      const uniqueDates = [...new Set(attendanceData.map(record => record.session_date))];
-      console.log('📅 [getAttendanceSessions] Unique session dates:', uniqueDates);
+      // Group by unique session timestamps (multiple sessions per day)
+      const uniqueSessions = new Map();
       
-      // For each unique date, get the count of present students
+      attendanceData.forEach(record => {
+        const sessionKey = `${record.session_date}-${record.timestamp}`;
+        if (!uniqueSessions.has(sessionKey)) {
+          uniqueSessions.set(sessionKey, {
+            session_date: record.session_date,
+            timestamp: record.timestamp
+          });
+        }
+      });
+      
+      const uniqueSessionList = Array.from(uniqueSessions.values());
+      console.log('📅 [getAttendanceSessions] Unique sessions:', uniqueSessionList.length);
+      
+      // For each unique session timestamp, get the count of present students
       const sessionsWithCounts = await Promise.all(
-        uniqueDates.map(async (date) => {
-          console.log(`🔄 [getAttendanceSessions] Processing date: ${date}`);
+        uniqueSessionList.map(async (session) => {
+          console.log(`🔄 [getAttendanceSessions] Processing session: ${session.timestamp}`);
           
           const { data: sessionAttendance, error: sessionError } = await supabase
             .from('attendance')
             .select('*')
             .eq('class_id', classId)
-            .eq('session_date', date)
+            .eq('session_date', session.session_date)
+            .eq('timestamp', session.timestamp)
             .eq('status', 'present');
 
-          console.log(`📈 [getAttendanceSessions] Present students for ${date}:`, { 
+          console.log(`📈 [getAttendanceSessions] Present students for session ${session.timestamp}:`, { 
             count: sessionAttendance?.length || 0, 
             data: sessionAttendance,
             error: sessionError 
@@ -918,21 +1032,23 @@ export const useClasses = () => {
           if (sessionError) {
             console.error('❌ [getAttendanceSessions] Error fetching session attendance:', sessionError);
             return {
-              id: `${classId}-${date}`,
-              date,
-              qr_generated_at: attendanceData.find(a => a.session_date === date)?.timestamp || new Date().toISOString(),
+              id: `${classId}-${session.timestamp}`,
+              date: session.session_date,
+              timestamp: session.timestamp,
+              qr_generated_at: session.timestamp,
               present_count: 0
             };
           }
 
           const sessionData = {
-            id: `${classId}-${date}`,
-            date,
-            qr_generated_at: attendanceData.find(a => a.session_date === date)?.timestamp || new Date().toISOString(),
+            id: `${classId}-${session.timestamp}`,
+            date: session.session_date,
+            timestamp: session.timestamp,
+            qr_generated_at: session.timestamp,
             present_count: sessionAttendance?.length || 0
           };
 
-          console.log(`✅ [getAttendanceSessions] Session data for ${date}:`, sessionData);
+          console.log(`✅ [getAttendanceSessions] Session data for ${session.timestamp}:`, sessionData);
           return sessionData;
         })
       );
@@ -947,9 +1063,9 @@ export const useClasses = () => {
   }, []);
 
   // Get attendance details for a specific session
-  const getSessionAttendance = useCallback(async (classId: string, sessionDate: string) => {
+  const getSessionAttendance = useCallback(async (classId: string, sessionTimestamp: string) => {
     try {
-      console.log('🔍 [getSessionAttendance] Starting fetch for:', { classId, sessionDate });
+      console.log('🔍 [getSessionAttendance] Starting fetch for:', { classId, sessionTimestamp });
 
       // Get all enrollments for this class to include absent students
       const { data: enrollments, error: enrollError } = await supabase
@@ -971,12 +1087,12 @@ export const useClasses = () => {
         throw enrollError;
       }
 
-      // Get attendance records for this session
+      // Get attendance records for this specific session timestamp
       const { data: attendanceData, error: attendanceError } = await supabase
         .from('attendance')
         .select('*')
         .eq('class_id', classId)
-        .eq('session_date', sessionDate);
+        .eq('timestamp', sessionTimestamp);
 
       console.log('📊 [getSessionAttendance] Attendance query:', { attendanceData, attendanceError });
 
