@@ -677,14 +677,14 @@ const StudentDashboard = () => {
             <p className="text-muted-foreground">Loading your classes...</p>
           </div>
         ) : enrollments.length === 0 ? (
-          <Card className="text-center py-16 bg-gradient-to-br from-slate-50 to-gray-100 border border-gray-200 shadow-xl">
+          <Card className="text-center py-16 bg-gradient-to-br from-slate-50 to-gray-100 dark:from-slate-800 dark:to-slate-900 border border-gray-200 dark:border-slate-700 shadow-xl">
             <CardContent>
               <div className="relative mb-8">
                 <div className="absolute inset-0 bg-gradient-to-r from-emerald-400 to-blue-500 rounded-full blur-2xl opacity-20 w-32 h-32 mx-auto"></div>
-                <BookOpen className="relative h-20 w-20 mx-auto text-slate-400" />
+                <BookOpen className="relative h-20 w-20 mx-auto text-slate-400 dark:text-slate-500" />
               </div>
-              <h3 className="text-2xl font-bold mb-4 text-slate-800">No Classes Joined Yet</h3>
-              <p className="text-lg text-slate-600 mb-8 max-w-md mx-auto">
+              <h3 className="text-2xl font-bold mb-4 text-slate-800 dark:text-slate-200">No Classes Joined Yet</h3>
+              <p className="text-lg text-slate-600 dark:text-slate-400 mb-8 max-w-md mx-auto">
                 Get the class code from your teacher and join your first class to start tracking attendance.
               </p>
               <Button 

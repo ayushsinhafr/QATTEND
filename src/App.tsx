@@ -8,6 +8,9 @@ import { ThemeProvider } from "./hooks/useTheme";
 import Landing from "./pages/Landing";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
+import VerifyEmail from "./pages/VerifyEmail";
+import ForgotPassword from "./pages/ForgotPassword";
+import ResetPasswordVerify from "./pages/ResetPasswordVerify";
 import Dashboard from "./pages/Dashboard";
 import ProtectedRoute from "./components/ProtectedRoute";
 import NotFound from "./pages/NotFound";
@@ -16,32 +19,63 @@ const queryClient = new QueryClient();
 
 // Component to handle auth-based routing
 const AuthenticatedApp = () => {
-  const { user, loading } = useAuth();
+  const { user, loading, profile } = useAuth();
   
   if (loading) {
     return <div>Loading...</div>;
   }
 
+  // Check if user exists but has no profile (needs verification)
+  const needsVerification = user && !profile;
+
   return (
     <Routes>
       <Route 
         path="/" 
-        element={user ? <Navigate to="/dashboard" replace /> : <Landing />} 
+        element={
+          needsVerification ? 
+            <Navigate to={`/verify-email?email=${encodeURIComponent(user.email || '')}&type=signup`} replace /> :
+            user ? <Navigate to="/dashboard" replace /> : <Landing />
+        } 
       />
       <Route 
         path="/login" 
-        element={user ? <Navigate to="/dashboard" replace /> : <Login />} 
+        element={
+          needsVerification ? 
+            <Navigate to={`/verify-email?email=${encodeURIComponent(user.email || '')}&type=signup`} replace /> :
+            user ? <Navigate to="/dashboard" replace /> : <Login />
+        } 
       />
       <Route 
         path="/register" 
-        element={user ? <Navigate to="/dashboard" replace /> : <Register />} 
+        element={
+          needsVerification ? 
+            <Navigate to={`/verify-email?email=${encodeURIComponent(user.email || '')}&type=signup`} replace /> :
+            user ? <Navigate to="/dashboard" replace /> : <Register />
+        } 
+      />
+      <Route 
+        path="/verify-email" 
+        element={<VerifyEmail />} 
+      />
+      <Route 
+        path="/forgot-password" 
+        element={user ? <Navigate to="/dashboard" replace /> : <ForgotPassword />} 
+      />
+      <Route 
+        path="/reset-password-verify" 
+        element={<ResetPasswordVerify />} 
       />
       <Route
         path="/dashboard"
         element={
-          <ProtectedRoute>
-            <Dashboard />
-          </ProtectedRoute>
+          needsVerification ? (
+            <Navigate to={`/verify-email?email=${encodeURIComponent(user?.email || '')}&type=signup`} replace />
+          ) : (
+            <ProtectedRoute>
+              <Dashboard />
+            </ProtectedRoute>
+          )
         }
       />
       <Route path="*" element={<NotFound />} />

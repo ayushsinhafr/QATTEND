@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { useNavigate, Link, useLocation } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -7,7 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { GraduationCap, Loader2 } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { GraduationCap, Loader2, CheckCircle } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 
@@ -21,16 +22,32 @@ type LoginFormData = z.infer<typeof loginSchema>;
 const Login = () => {
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
   const { signIn } = useAuth();
   const { toast } = useToast();
+
+  // Check for verification success message
+  const verificationMessage = location.state?.message;
+  const prefilledEmail = location.state?.email;
 
   const {
     register,
     handleSubmit,
+    setValue,
     formState: { errors },
   } = useForm<LoginFormData>({
     resolver: zodResolver(loginSchema),
+    defaultValues: {
+      uniqueId: prefilledEmail || "",
+    },
   });
+
+  // Set email if provided from verification
+  useEffect(() => {
+    if (prefilledEmail) {
+      setValue("uniqueId", prefilledEmail);
+    }
+  }, [prefilledEmail, setValue]);
 
   const onSubmit = async (data: LoginFormData) => {
     setLoading(true);
@@ -62,7 +79,7 @@ const Login = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-brand-50 via-white to-neutral-50 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-gradient-to-br from-brand-50 via-white to-neutral-50 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 flex items-center justify-center p-4">
       <Card className="w-full max-w-md glass-card border-0 shadow-2xl">
         <CardHeader className="text-center">
           <div className="flex justify-center mb-4">
@@ -71,15 +88,25 @@ const Login = () => {
               <img src="/LOGO.png" alt="AttendEase Logo" className="relative h-14 w-14 rounded-2xl shadow-lg" />
             </div>
           </div>
-          <CardTitle className="text-3xl font-bold text-neutral-900">Welcome Back</CardTitle>
-          <CardDescription className="text-neutral-600 text-base">
+          <CardTitle className="text-3xl font-bold text-neutral-900 dark:text-neutral-100">Welcome Back</CardTitle>
+          <CardDescription className="text-neutral-600 dark:text-neutral-400 text-base">
             Sign in to your AttendEase account
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
+          {/* Verification Success Message */}
+          {verificationMessage && (
+            <Alert className="border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-950/20 text-green-800 dark:text-green-200">
+              <CheckCircle className="h-4 w-4" />
+              <AlertDescription className="font-medium">
+                {verificationMessage}
+              </AlertDescription>
+            </Alert>
+          )}
+
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
             <div className="space-y-2">
-              <Label htmlFor="uniqueId" className="text-neutral-700 font-medium">Email Address</Label>
+              <Label htmlFor="uniqueId" className="text-neutral-700 dark:text-neutral-300 font-medium">Email Address</Label>
               <Input
                 id="uniqueId"
                 type="email"
@@ -93,7 +120,15 @@ const Login = () => {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="password" className="text-neutral-700 font-medium">Password</Label>
+              <div className="flex justify-between items-center">
+                <Label htmlFor="password" className="text-neutral-700 dark:text-neutral-300 font-medium">Password</Label>
+                <Link 
+                  to="/forgot-password" 
+                  className="text-sm text-brand-600 dark:text-brand-400 hover:text-brand-700 dark:hover:text-brand-300 hover:underline transition-colors font-medium"
+                >
+                  Forgot password?
+                </Link>
+              </div>
               <Input
                 id="password"
                 type="password"

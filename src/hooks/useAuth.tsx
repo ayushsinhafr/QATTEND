@@ -27,6 +27,7 @@ interface AuthContextType {
     role: 'faculty' | 'student';
   }) => Promise<{ error?: Error | null }>;
   signOut: () => Promise<void>;
+  resetPassword: (email: string) => Promise<{ error?: Error | null }>;
   fetchProfile: () => Promise<void>;
 }
 
@@ -128,13 +129,11 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     role: 'faculty' | 'student';
   }) => {
     try {
-      const redirectUrl = `${window.location.origin}/`;
-      
-      const { error } = await supabase.auth.signUp({
+      const { data: signUpData, error } = await supabase.auth.signUp({
         email: data.email,
         password: data.password,
         options: {
-          emailRedirectTo: redirectUrl,
+          emailRedirectTo: `${window.location.origin}/verify-email`,
           data: {
             name: data.name,
             unique_id: data.uniqueId,
@@ -147,12 +146,20 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         return { error };
       }
 
-      toast({
-        title: "Account created successfully!",
-        description: "Please check your email to confirm your account.",
-      });
+      // Check if user needs to confirm email
+      if (signUpData.user && !signUpData.user.email_confirmed_at) {
+        // Sign out user to force verification flow
+        await supabase.auth.signOut();
+        
+        // Clear any cached session data
+        setSession(null);
+        setUser(null);
+        setProfile(null);
+        
+        return { error: null, data: signUpData, needsConfirmation: true };
+      }
 
-      return { error: null };
+      return { error: null, data: signUpData, needsConfirmation: false };
     } catch (error) {
       return { error };
     }
@@ -212,6 +219,27 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     }
   };
 
+  const resetPassword = async (email: string) => {
+    try {
+      console.log("🔥 [Auth] Starting password reset for:", email);
+      
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/reset-password-complete`,
+      });
+
+      if (error) {
+        console.error("❌ [Auth] Password reset error:", error);
+        return { error };
+      }
+
+      console.log("✅ [Auth] Password reset email sent successfully");
+      return { error: null };
+    } catch (error) {
+      console.error("❌ [Auth] Unexpected password reset error:", error);
+      return { error };
+    }
+  };
+
   const value = {
     user,
     profile,
@@ -220,6 +248,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     signIn,
     signUp,
     signOut,
+    resetPassword,
     fetchProfile,
   };
 

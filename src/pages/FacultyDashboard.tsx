@@ -1125,7 +1125,7 @@ const FacultyDashboard = () => {
               {/* Enhanced QR Code Display */}
               <div className="relative inline-block mb-8">
                 <div className="absolute inset-0 bg-gradient-to-r from-blue-400 to-purple-500 rounded-2xl blur-lg opacity-50"></div>
-                <div className="relative bg-white p-6 rounded-2xl shadow-xl">
+                <div className="relative bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-xl">
                   <img 
                     src={qrCodeUrl} 
                     alt="Attendance QR Code" 
@@ -1136,7 +1136,7 @@ const FacultyDashboard = () => {
               
               {/* Live Attendance Display */}
               {liveAttendance.length > 0 && (
-                <div className="mt-8 bg-white/80 backdrop-blur-sm rounded-2xl p-6 border border-green-200 shadow-lg">
+                <div className="mt-8 bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm rounded-2xl p-6 border border-green-200 dark:border-green-700 shadow-lg">
                   <div className="flex items-center justify-center gap-2 mb-4">
                     <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
                     <h4 className="text-xl font-semibold text-green-700">Live Attendance</h4>
@@ -1169,7 +1169,7 @@ const FacultyDashboard = () => {
                   setQrCodeUrl("");
                   setSelectedClass(null);
                 }}
-                className="mt-8 bg-white hover:bg-red-50 border-red-200 text-red-600 hover:border-red-300 px-8 py-3 text-base font-medium rounded-xl transition-all duration-200"
+                className="mt-8 bg-white dark:bg-slate-800 hover:bg-red-50 dark:hover:bg-red-950/20 border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 hover:border-red-300 dark:hover:border-red-700 px-8 py-3 text-base font-medium rounded-xl transition-all duration-200"
                 size="lg"
               >
                 Close QR Code
@@ -1189,14 +1189,14 @@ const FacultyDashboard = () => {
             <p className="text-slate-500 mt-2">Please wait while we fetch your data</p>
           </div>
         ) : classes.length === 0 ? (
-          <Card className="text-center py-16 bg-gradient-to-br from-slate-50 to-gray-100 border border-gray-200 shadow-xl">
+          <Card className="text-center py-16 bg-gradient-to-br from-slate-50 to-gray-100 dark:from-slate-800 dark:to-slate-900 border border-gray-200 dark:border-slate-700 shadow-xl">
             <CardContent>
               <div className="relative mb-8">
                 <div className="absolute inset-0 bg-gradient-to-r from-blue-400 to-purple-500 rounded-full blur-2xl opacity-20 w-32 h-32 mx-auto"></div>
-                <GraduationCap className="relative h-20 w-20 mx-auto text-slate-400" />
+                <GraduationCap className="relative h-20 w-20 mx-auto text-slate-400 dark:text-slate-500" />
               </div>
-              <h3 className="text-2xl font-bold mb-4 text-slate-800">No Classes Created Yet</h3>
-              <p className="text-lg text-slate-600 mb-8 max-w-md mx-auto">
+              <h3 className="text-2xl font-bold mb-4 text-slate-800 dark:text-slate-200">No Classes Created Yet</h3>
+              <p className="text-lg text-slate-600 dark:text-slate-400 mb-8 max-w-md mx-auto">
                 Start by creating your first class to begin taking attendance and managing your students.
               </p>
               <Button 
@@ -1421,11 +1421,11 @@ const FacultyDashboard = () => {
                                 </div>
                                 <div className="text-sm text-red-700">Absent</div>
                               </div>
-                              <div className="p-3 bg-gray-50 rounded-lg">
-                                <div className="text-2xl font-bold text-gray-600">
+                              <div className="p-3 bg-gray-50 dark:bg-slate-700 rounded-lg">
+                                <div className="text-2xl font-bold text-gray-600 dark:text-gray-300">
                                   {analyticsData.latestSession.notMarkedCount}
                                 </div>
-                                <div className="text-sm text-gray-700">Not Marked</div>
+                                <div className="text-sm text-gray-700 dark:text-gray-400">Not Marked</div>
                               </div>
                             </div>
                             <div className="text-center">
@@ -1507,7 +1507,7 @@ const FacultyDashboard = () => {
                                 <span>Absent: <strong>{session.absentCount}</strong></span>
                               </div>
                               <div className="flex items-center gap-2">
-                                <div className="w-3 h-3 bg-gray-400 rounded-full"></div>
+                                <div className="w-3 h-3 bg-gray-400 dark:bg-gray-500 rounded-full"></div>
                                 <span>Not Marked: <strong>{session.notMarkedCount}</strong></span>
                               </div>
                             </div>
@@ -1516,7 +1516,7 @@ const FacultyDashboard = () => {
                               <div className="text-xs text-muted-foreground mb-1">
                                 Total Enrolled: {session.totalStudents} | Attendance Rate: {session.attendancePercentage}%
                               </div>
-                              <div className="w-full bg-gray-200 rounded-full h-2">
+                              <div className="w-full bg-gray-200 dark:bg-slate-600 rounded-full h-2">
                                 <div className="flex h-2 rounded-full overflow-hidden">
                                   <div 
                                     className="bg-green-500" 
@@ -2120,14 +2120,14 @@ const FacultyDashboard = () => {
                         
                         return (
                           <div key={student.student_id} className={`p-3 rounded-lg border ${
-                            isMarkedByQR ? 'bg-green-100 border-green-300' : 'bg-white border-gray-200'
+                            isMarkedByQR ? 'bg-green-100 dark:bg-green-900/20 border-green-300 dark:border-green-700' : 'bg-white dark:bg-slate-800 border-gray-200 dark:border-slate-600'
                           }`}>
                             <div className="flex items-center justify-between">
                               <div className="flex-1">
-                                <div className="font-medium text-gray-800">{student.name}</div>
-                                <div className="text-sm text-gray-600">{student.unique_id}</div>
+                                <div className="font-medium text-gray-800 dark:text-gray-200">{student.name}</div>
+                                <div className="text-sm text-gray-600 dark:text-gray-400">{student.unique_id}</div>
                                 {isMarkedByQR && (
-                                  <div className="text-xs text-green-600 font-medium mt-1">
+                                  <div className="text-xs text-green-600 dark:text-green-400 font-medium mt-1">
                                     ✓ Already marked via QR code
                                   </div>
                                 )}
@@ -2163,19 +2163,19 @@ const FacultyDashboard = () => {
             </div>
 
             {/* Summary Section */}
-            <div className="mt-4 p-4 bg-gradient-to-r from-gray-50 to-slate-50 rounded-lg border">
-              <h3 className="font-semibold text-gray-800 mb-2">Session Summary</h3>
+            <div className="mt-4 p-4 bg-gradient-to-r from-gray-50 to-slate-50 dark:from-slate-800 dark:to-slate-900 rounded-lg border dark:border-slate-600">
+              <h3 className="font-semibold text-gray-800 dark:text-gray-200 mb-2">Session Summary</h3>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                 <div className="text-center">
-                  <div className="text-2xl font-bold text-blue-600">{hybridEnrolledStudents.length}</div>
-                  <div className="text-gray-600">Total Students</div>
+                  <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">{hybridEnrolledStudents.length}</div>
+                  <div className="text-gray-600 dark:text-gray-400">Total Students</div>
                 </div>
                 <div className="text-center">
-                  <div className="text-2xl font-bold text-green-600">{hybridAttendanceRecords.length}</div>
-                  <div className="text-gray-600">QR Scanned</div>
+                  <div className="text-2xl font-bold text-green-600 dark:text-green-400">{hybridAttendanceRecords.length}</div>
+                  <div className="text-gray-600 dark:text-gray-400">QR Scanned</div>
                 </div>
                 <div className="text-center">
-                  <div className="text-2xl font-bold text-orange-600">
+                  <div className="text-2xl font-bold text-orange-600 dark:text-orange-400">
                     {(() => {
                       const manuallyMarked = Object.entries(hybridManualAttendanceData).filter(([studentId, status]) => 
                         (status === 'present' || status === 'absent') && 
@@ -2184,7 +2184,7 @@ const FacultyDashboard = () => {
                       return manuallyMarked.length;
                     })()}
                   </div>
-                  <div className="text-gray-600">Manual Marked</div>
+                  <div className="text-gray-600 dark:text-gray-400">Manual Marked</div>
                 </div>
                 <div className="text-center">
                   <div className="text-2xl font-bold text-red-600">

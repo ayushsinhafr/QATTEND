@@ -98,13 +98,13 @@ All colors MUST be HSL.
 }
 
 @layer components {
-  /* Professional utility classes */
+  /* Professional utility classes with dark mode support */
   .glass-card {
-    @apply bg-white/80 backdrop-blur-md border border-white/20 shadow-lg;
+    @apply bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border border-white/20 dark:border-slate-700/30 shadow-lg;
   }
   
   .card-elevated {
-    @apply bg-white shadow-sm hover:shadow-md transition-shadow duration-200 border border-gray-100;
+    @apply bg-white dark:bg-slate-800 shadow-sm hover:shadow-md dark:shadow-slate-900/20 transition-shadow duration-200 border border-gray-100 dark:border-slate-700;
   }
   
   .btn-primary {
@@ -116,10 +116,33 @@ All colors MUST be HSL.
   }
   
   .text-gradient {
-    @apply bg-gradient-to-r from-brand-600 to-brand-700 bg-clip-text text-transparent;
+    @apply bg-gradient-to-r from-brand-600 to-brand-700 dark:from-brand-400 dark:to-brand-500 bg-clip-text text-transparent;
   }
   
   .border-gradient {
-    @apply border border-transparent bg-gradient-to-r from-brand-200 to-brand-300 bg-clip-border;
+    @apply border border-transparent bg-gradient-to-r from-brand-200 to-brand-300 dark:from-brand-800 dark:to-brand-700 bg-clip-border;
+  }
+
+  /* Input field styling with dark mode */
+  .input-field {
+    @apply bg-white/50 dark:bg-slate-800/50 border-neutral-200 dark:border-slate-600 focus:border-brand-400 dark:focus:border-brand-500 focus:ring-brand-400/20 dark:focus:ring-brand-500/20 text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-500 dark:placeholder:text-neutral-400;
+  }
+
+  /* Card styling with dark mode */
+  .card-base {
+    @apply bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm border border-white/50 dark:border-slate-700/50;
+  }
+
+  /* Text colors for dark mode */
+  .text-primary-content {
+    @apply text-neutral-900 dark:text-neutral-100;
+  }
+  
+  .text-secondary-content {
+    @apply text-neutral-600 dark:text-neutral-400;
+  }
+
+  .text-muted-content {
+    @apply text-neutral-500 dark:text-neutral-500;
   }
 }
