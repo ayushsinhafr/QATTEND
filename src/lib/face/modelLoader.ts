@@ -1,6 +1,8 @@
 // Use dynamic import with proper error handling
 let ortModule: any = null;
 
+import { modelPreloader } from './modelPreloader';
+
 async function loadOnnxRuntime() {
   if (ortModule) {
     return ortModule;
@@ -39,7 +41,7 @@ async function configureOnnxRuntime() {
       ort.env.logLevel = 'warning';
       if (ort.env.wasm) {
         ort.env.wasm.numThreads = 1;
-        ort.env.wasm.wasmPaths = '/onnx-wasm/';
+        ort.env.wasm.wasmPaths = 'https://huggingface.co/ayu5hsinha/qattend-face-models/resolve/main/onnx-wasm/';
       }
     }
   } catch (error) {
@@ -100,7 +102,7 @@ class FaceModelManager {
       const ort = await loadOnnxRuntime();
       
       // Load model configuration
-      const configResponse = await fetch('/models/model-config.json');
+      const configResponse = await fetch('https://huggingface.co/ayu5hsinha/qattend-face-models/resolve/main/model-config.json');
       if (!configResponse.ok) {
         throw new Error('Failed to load model configuration');
       }
@@ -108,14 +110,10 @@ class FaceModelManager {
 
       // Load ONNX model
       console.log('🔄 Loading face recognition model...');
-      const modelPath = `/models/${this.config.fileName}`;
+      const filename = this.config.fileName;
       
-      // Fetch model as array buffer
-      const response = await fetch(modelPath);
-      if (!response.ok) {
-        throw new Error(`Failed to fetch model: ${response.status} ${response.statusText}`);
-      }
-      const arrayBuffer = await response.arrayBuffer();
+      // Use preloader to get cached model or download
+      const arrayBuffer = await modelPreloader.getModel(filename);
       
       // Check if InferenceSession is available
       if (!ort.InferenceSession) {
