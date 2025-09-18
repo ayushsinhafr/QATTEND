@@ -1,5 +1,5 @@
 -- Performance optimization migration
--- Adds missing indexes and query optimizations for AttendEase
+-- Adds missing indexes and query optimizations for QAttend
 
 -- Add composite indexes for frequent query patterns
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_attendance_class_date 

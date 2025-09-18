@@ -12,6 +12,7 @@ import VerifyEmail from "./pages/VerifyEmail";
 import ForgotPassword from "./pages/ForgotPassword";
 import ResetPasswordVerify from "./pages/ResetPasswordVerify";
 import Dashboard from "./pages/Dashboard";
+import FaceEnrollment from "./pages/FaceEnrollment";
 import ProtectedRoute from "./components/ProtectedRoute";
 import NotFound from "./pages/NotFound";
 
@@ -78,6 +79,10 @@ const AuthenticatedApp = () => {
           )
         }
       />
+      <Route
+        path="/face-enrollment"
+        element={<FaceEnrollment />}
+      />
       <Route path="*" element={<NotFound />} />
     </Routes>
   );
@@ -85,7 +90,7 @@ const AuthenticatedApp = () => {
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
-    <ThemeProvider defaultTheme="system" storageKey="attendease-ui-theme">
+    <ThemeProvider defaultTheme="system" storageKey="qattend-ui-theme">
       <TooltipProvider>
         <Toaster />
         <Sonner />

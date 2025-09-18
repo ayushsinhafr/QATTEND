@@ -4,11 +4,11 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="/LOGO.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>ATTENDEASE</title>
+    <title>QATTEND</title>
     <meta name="description" content="The Proxy Busters" />
     <meta name="author" content="The Proxy Busters" />
 
-    <meta property="og:title" content="ATTENDEASE" />
+    <meta property="og:title" content="QATTEND" />
     <meta property="og:description" content="The Proxy Busters" />
     <meta property="og:type" content="website" />
   <meta property="og:image" content="/LOGO.png" />
@@ -16,6 +16,14 @@
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:site" content="#" />
   <meta name="twitter:image" content="/LOGO.png" />
+  
+  <!-- Preload ONNX Runtime for better loading -->
+  <script>
+    // Set up ONNX Runtime loading
+    window.ortReady = new Promise((resolve) => {
+      window.ortReadyResolve = resolve;
+    });
+  </script>
   </head>
 
   <body>

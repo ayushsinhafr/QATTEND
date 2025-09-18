@@ -1,4 +1,4 @@
--- Combined AttendEase Database Fixes: Constraints and Performance Optimization
+-- Combined QAttend Database Fixes: Constraints and Performance Optimization
 -- This migration combines critical constraint fixes with performance optimizations
 
 -- PART 1: Fix attendance constraints to allow multiple sessions per day
