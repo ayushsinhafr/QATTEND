@@ -269,8 +269,19 @@ export class AttendanceSessionManager {
 }
 
 // Auto cleanup every 30 minutes
+let cleanupInterval: NodeJS.Timeout | null = null;
+
 if (typeof window !== 'undefined') {
-  setInterval(() => {
+  cleanupInterval = setInterval(() => {
     AttendanceSessionManager.cleanupExpiredSessions();
   }, 30 * 60 * 1000);
+}
+
+// Cleanup interval when module is unloaded
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeunload', () => {
+    if (cleanupInterval) {
+      clearInterval(cleanupInterval);
+    }
+  });
 }

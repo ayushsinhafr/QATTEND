@@ -169,7 +169,8 @@ const FaceCamera = forwardRef<FaceCameraRef, FaceCameraProps>(({
     return () => {
       stopCamera();
     };
-  }, [autoStart]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoStart]); // Only depend on autoStart to avoid recreation loops
 
   // Handle visibility change (pause camera when tab not visible)
   useEffect(() => {

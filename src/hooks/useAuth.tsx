@@ -56,7 +56,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       console.error('Error fetching profile:', error);
       
       // Retry logic for network errors
-      if (retryCount < 3 && (error as any)?.message?.includes('Failed to fetch')) {
+      if (retryCount < 3 && error instanceof Error && error.message.includes('Failed to fetch')) {
         console.log(`Retrying profile fetch... (attempt ${retryCount + 1}/3)`);
         setTimeout(() => {
           fetchProfile(retryCount + 1);
@@ -118,14 +118,14 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
       if (error) {
         if (error.message.includes('Email not confirmed')) {
-          return { error: { message: 'Please check your email and click the confirmation link before signing in.' } };
+          return { error: new Error('Please check your email and click the confirmation link before signing in.') };
         }
-        return { error: { message: error.message || 'Invalid credentials. Please check your email and password.' } };
+        return { error: new Error(error.message || 'Invalid credentials. Please check your email and password.') };
       }
 
       return { error: null };
-    } catch (error) {
-      return { error };
+    } catch (error: unknown) {
+      return { error: error instanceof Error ? error : new Error('An unexpected error occurred') };
     }
   };
 
@@ -168,8 +168,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       }
 
       return { error: null, data: signUpData, needsConfirmation: false };
-    } catch (error) {
-      return { error };
+    } catch (error: unknown) {
+      return { error: error instanceof Error ? error : new Error('An unexpected error occurred') };
     }
   };
 
@@ -242,9 +242,9 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
       console.log("✅ [Auth] Password reset email sent successfully");
       return { error: null };
-    } catch (error) {
+    } catch (error: unknown) {
       console.error("❌ [Auth] Unexpected password reset error:", error);
-      return { error };
+      return { error: error instanceof Error ? error : new Error('An unexpected error occurred') };
     }
   };
 

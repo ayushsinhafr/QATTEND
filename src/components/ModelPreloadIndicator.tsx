@@ -1,52 +1,72 @@
 import { useEffect, useState } from 'react';
-import { modelPreloader } from '@/lib/face/modelPreloader';
+import { Loader2, CheckCircle, AlertCircle } from 'lucide-react';
+import FaceModelManager from '@/lib/face/modelLoader';
 
-interface PreloadStatus {
-  total: number;
-  loaded: number;
-  isComplete: boolean;
-}
-
-export const ModelPreloadIndicator = () => {
-  const [status, setStatus] = useState<PreloadStatus>({ total: 2, loaded: 0, isComplete: false });
-  const [showIndicator, setShowIndicator] = useState(false);
+export function ModelPreloadIndicator() {
+  const [isLoading, setIsLoading] = useState(true);
+  const [isLoaded, setIsLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const checkStatus = () => {
-      const currentStatus = modelPreloader.getPreloadStatus();
-      setStatus(currentStatus);
-      
-      // Show indicator only while loading
-      setShowIndicator(!currentStatus.isComplete && currentStatus.loaded < currentStatus.total);
+    const preloadModels = async () => {
+      try {
+        await FaceModelManager.getInstance().loadModel();
+        setIsLoaded(true);
+        setError(null);
+      } catch (err) {
+        console.warn('Model preload failed:', err);
+        setError(err instanceof Error ? err.message : 'Failed to load models');
+      } finally {
+        setIsLoading(false);
+      }
     };
 
-    // Check status immediately
-    checkStatus();
-
-    // Check status periodically while loading
-    const interval = setInterval(checkStatus, 1000);
-
-    // Clean up
-    return () => clearInterval(interval);
+    preloadModels();
   }, []);
 
-  if (!showIndicator) return null;
-
-  const progress = (status.loaded / status.total) * 100;
+  if (!isLoading && !error) {
+    return null; // Hide when successfully loaded
+  }
 
   return (
-    <div className="fixed bottom-4 right-4 bg-blue-600 text-white px-4 py-2 rounded-lg shadow-lg z-50">
-      <div className="flex items-center gap-2 text-sm">
-        <div className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full"></div>
-        <span>Loading face recognition models...</span>
-        <span className="font-mono">{Math.round(progress)}%</span>
-      </div>
-      <div className="w-full bg-blue-500 rounded-full h-1 mt-1">
-        <div 
-          className="bg-white h-1 rounded-full transition-all duration-300"
-          style={{ width: `${progress}%` }}
-        ></div>
+    <div className="fixed bottom-4 right-4 bg-white dark:bg-gray-800 shadow-lg rounded-lg p-4 max-w-sm border">
+      <div className="flex items-center gap-3">
+        {isLoading && (
+          <>
+            <Loader2 className="h-5 w-5 animate-spin text-blue-500" />
+            <div>
+              <p className="text-sm font-medium">Loading Face Recognition</p>
+              <p className="text-xs text-gray-600 dark:text-gray-400">
+                Preparing models for faster verification...
+              </p>
+            </div>
+          </>
+        )}
+        
+        {error && (
+          <>
+            <AlertCircle className="h-5 w-5 text-amber-500" />
+            <div>
+              <p className="text-sm font-medium">Model Loading Issue</p>
+              <p className="text-xs text-gray-600 dark:text-gray-400">
+                Face recognition will load on demand
+              </p>
+            </div>
+          </>
+        )}
+        
+        {isLoaded && (
+          <>
+            <CheckCircle className="h-5 w-5 text-green-500" />
+            <div>
+              <p className="text-sm font-medium">Models Ready</p>
+              <p className="text-xs text-gray-600 dark:text-gray-400">
+                Face recognition is optimized
+              </p>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
-};
+}

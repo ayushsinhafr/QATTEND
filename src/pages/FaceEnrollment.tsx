@@ -106,7 +106,7 @@ const FaceEnrollment = () => {
     const checkAuth = async () => {
       // If this is first-time enrollment, allow access even without full authentication
       if (isFirstTime) {
-        console.log('First-time enrollment, allowing access');
+        // First-time enrollment flow
         return;
       }
       

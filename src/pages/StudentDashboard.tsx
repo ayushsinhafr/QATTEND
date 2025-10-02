@@ -78,7 +78,9 @@ const StudentDashboard = () => {
         .order('session_date', { ascending: false });
 
       if (error) throw error;
-      console.log('Attendance data:', data); // Debug log
+      if (import.meta.env.DEV) {
+        console.log('Attendance data:', data);
+      }
       setAttendanceHistory(data || []);
     } catch (error) {
       console.error('Error fetching attendance history:', error);
@@ -153,7 +155,9 @@ const StudentDashboard = () => {
         setFaceEnrollmentChecked(true);
         
       } catch (error) {
-        console.log('Face enrollment check failed:', error);
+        if (import.meta.env.DEV) {
+          console.log('Face enrollment check failed:', error);
+        }
         // Default to allowing access if check fails
         setHasFaceProfile(true);
         setFaceEnrollmentChecked(true);

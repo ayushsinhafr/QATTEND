@@ -23,3 +23,47 @@ dist-ssr
 *.sln
 *.sw?
 .env
+
+# Face recognition models (too heavy for git)
+public/models/
+*.onnx
+*.wasm
+
+# Development artifacts and documentation files
+DOWNLOAD_MOBILEFACENET.md
+EASY_DOWNLOAD.md
+LIGHTWEIGHT_MODEL_ANALYSIS.md
+MOBILEFACENET_SETUP.md
+MODEL_SETUP_GUIDE.md
+MXNET_TO_ONNX_CONVERSION.md
+SIMPLE_MANUAL_DOWNLOAD.md
+WORKING_DOWNLOAD_LINKS.md
+FACE_RECOGNITION_README.md
+FACE_VERIFICATION_SESSION_FIX.md
+FINAL_FACE_VERIFICATION_FIX.md
+MOBILEFACENET_SETUP.md
+NEXT_STEPS.md
+UI_UX_FIXES_COMPLETED.md
+VISUAL_WORKFLOW.md
+WORKFLOW_GUIDE.md
+
+# Python scripts for development
+download_models.py
+
+# Large binary files
+bun.lockb
+
+# Database and SQL files (keep only essential ones)
+CLEAN_AND_SECURE.sql
+create_face_tables.sql
+debug_attendance_sessions.sql
+EXECUTE_THIS_DIRECTLY.sql
+fix_face_tables.sql
+RUN_THIS_IN_SUPABASE_SQL.sql
+SECURITY_FIX.sql
+SETUP_FACE_TABLES_FIXED.sql
+SETUP_FACE_TABLES.sql
+UPDATE_FOR_SESSIONS.sql
+
+# Test files
+test-face-system.js

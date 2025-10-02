@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:simple": "vite --port 3000 --open --force",
     "dev:https": "vite --mode https",
     "build": "vite build",
     "build:dev": "vite build --mode development",
